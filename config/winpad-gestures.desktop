@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Windows-Style Touchpad Gestures
+Comment=Lightweight native 2/3/4-finger Precision Touchpad gestures for X11/XFCE
+Exec=sh -c 'exec "$HOME/.local/bin/winpad-gestures"'
+OnlyShowIn=XFCE;
+X-GNOME-Autostart-enabled=true
+Terminal=false

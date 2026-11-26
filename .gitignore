@@ -1,0 +1,10 @@
+# Compiled binaries
+winpad-gestures
+winpad-taskview
+*.o
+*.out
+
+# Logs & runtime files
+*.log
+*.pid
+*.lock
