@@ -4,6 +4,7 @@
 
 <br/><br/>
 
+[![Build Check](https://github.com/mudmini009/winpad-x11/actions/workflows/ci.yml/badge.svg)](https://github.com/mudmini009/winpad-x11/actions/workflows/ci.yml)
 [![Language](https://img.shields.io/badge/language-C11-555555?style=for-the-badge&logo=c&logoColor=white)](src/)
 [![Platform](https://img.shields.io/badge/X11-XFCE%20%7C%20EWMH-7aa2f7?style=for-the-badge&logo=linux&logoColor=white)](#requirements)
 [![Footprint](https://img.shields.io/badge/daemon%20RAM-~5%20MB-9ece6a?style=for-the-badge)](#measured-footprint)
@@ -12,7 +13,7 @@
 
 **Bring genuine Windows 10/11 Precision Touchpad ergonomics to Linux X11 & XFCE — in pure C, with zero runtime bloat.**
 
-[Quick Install](#-quick-install) • [Gesture Map](#-gesture-map) • [Task View](#-live-task-view) • [Why winpad-x11?](#-why-winpad-x11) • [Configuration](#-configuration)
+[Quick Install](#-quick-install) • [Gesture Map](#-gesture-map) • [Windows Parity](#-windows-1011-precision-parity) • [Task View & OSD](#-live-task-view--fluent-osd) • [Configuration](#%EF%B8%8F-configuration) • [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -29,7 +30,8 @@ Most Linux X11 gesture tools either run heavy scripting runtimes (Ruby/Python), 
 | **Stack** | **Pure C (`evdev` + `X11`/`XTest`)** | C++ daemon + client | Python + pipe | Ruby gem | C / C++ daemon |
 | **Runtime deps** | **None** | PPA / pugixml / GTK | `libinput-tools`, `xdotool` | Ruby, `libinput-tools`, `xdotool` | `libinput-dev`, `xdotool` |
 | **Windows 3-state Up/Down cycle** | **Yes** | No | No | No | No |
-| **Interactive `Alt+Tab` scrubbing** | **Yes** (holds `Alt` while sliding) | Partial | No | No | No |
+| **Interactive `Alt+Tab` scrubbing** | **Yes** (holds `Alt`, clamped at ends) | Partial | No | No | No |
+| **1-swipe = 1-desktop (`4F`)** | **Yes** (Windows 11 default + Fluent OSD) | Manual | Manual | Manual | Manual |
 | **Multi-language XKB layout safe** | **Yes** (`grp:alt_shift_toggle` safe) | No | No | No | No |
 | **2-finger Back/Forward flick** | **Yes** (app-aware via `WM_CLASS`) | No | No | No | No |
 | **Built-in Live Task View UI** | **Yes** (`XComposite` previews) | No | No | No | No |
@@ -56,28 +58,60 @@ Unlike simple toggle scripts, 3-finger & 4-finger vertical swipes follow the exa
 - **Task View open → Swipe Down:** Closes Task View back to your windows
 
 ### Smart Responsiveness & Anti-Misfire Guards
-- **Fast-landing merge & 45 ms bounce hysteresis:** Preserves rapid initial swipe momentum during multi-finger landing (`< 55 ms`), with a `20 ms` 3-vs-4 settle window and `45 ms` downward-bounce hysteresis so swipes feel instantaneous while staying misfire-proof.
-- **Continuous 3-finger & 4-finger scrubbing:** Slide once across the touchpad to scrub smoothly across **all `Alt+Tab` windows** (`3F`) or **all Virtual Desktops `D1 → D4`** (`4F`) in a single motion—complete with a 60fps sliding-glow **Primary-Monitor Fluent ARGB OSD** via XRandR + Cairo.
-- **Task View aware navigation:** When Task View is open, 3-finger Left/Right scrubs window cards inside Task View and 4-finger Left/Right scrubs desktops live.
-- **Terminal-safe 2-finger Back/Forward:** Checks active window `WM_CLASS` via X11—sends `XF86Back`/`XF86Forward` to browsers & file managers, `Alt+Left`/`Alt+Right` to IDEs, and stays silent in terminals.
+- **Fast-landing merge & 45 ms bounce hysteresis:** Preserves rapid initial swipe momentum during multi-finger landing (`< 55 ms`), with a `22 ms` 3-vs-4 settle window, `45 ms` downward-bounce hysteresis, and `4 -> 3` liftoff lock so swipes feel instantaneous while staying misfire-proof.
+- **Boundary-clamped 3-finger `Alt+Tab` scrubbing:** Slide across the touchpad to scrub smoothly across open windows while holding `Alt`—**stopping cleanly at the first and last window** (Windows 10/11 style, no wraparound loop), even if starting from the desktop or Show Desktop.
+- **Windows-authentic 4-finger Desktop switch (`1 swipe = 1 desktop`):** Each 4-finger swipe Left/Right switches **one** Virtual Desktop cleanly with a 60fps time-compensated **Primary-Monitor Fluent ARGB OSD** via XRandR + Cairo (or set `four_finger_scrub = true` in config for continuous multi-desktop scrubbing).
+- **Task View aware navigation:** When Task View is open, 3-finger Left/Right scrubs window cards cleanly (clamped at first & last card, no looping) and 4-finger Left/Right switches desktops live.
+- **Terminal-safe 2-finger Back/Forward flick:** Checks active window `WM_CLASS` via X11—sends `XF86Back`/`XF86Forward` to browsers & file managers, `Alt+Left`/`Alt+Right` to IDEs, and stays silent in terminals.
 - **Scroll lock protection:** Vertical 2-finger scrolling locks out horizontal Back/Forward flicks (`> 5.5 mm` vertical motion), preventing accidental navigation while scrolling.
 - **XKB layout protection:** Saves and restores active XKB group via `XkbLockGroup` so `Alt+Shift+Tab` never accidentally flips multi-language layouts (e.g. `grp:alt_shift_toggle`).
 
 ---
 
-## 🪟 Live Task View
+## ⚖️ Windows 10/11 Precision Parity
 
-Swipe up with **3 or 4 fingers** to open **`winpad-taskview`** — matching Windows 11's layout with **real-time `XComposite` window thumbnails** centered for the active desktop, a **Virtual Desktops dock along the bottom** (with window counts and click-to-switch), an **All Desktops** toggle, **type-to-filter search**, and **0 MB idle RAM**.
+| Fingers | Gesture | Windows 11 Precision Default | `winpad-x11` Behavior | Match |
+|:---:|---|---|---|:---:|
+| **1F** | Move, tap, tap-drag, click | Cursor, left-click, drag | Handled natively via `libinput` (`40-libinput.conf`) | ✅ Exact |
+| **2F** | Tap | Right-click | `ClickMethod=clickfinger` + `TappingButtonMap=lrm` | ✅ Exact |
+| **2F** | Scroll Up/Down/Left/Right | Natural scroll | `NaturalScrolling=true` + `HorizontalScrolling=true` | ✅ Exact |
+| **2F** | Quick horizontal flick | Browser Back / Forward | `XF86Back`/`Forward` + IDE `Alt+←/→` (terminal-safe) | ✅ Exact |
+| **2F** | Pinch In / Out | App zoom | Handled by apps supporting `libinput` XI2.4 gestures | ℹ️ App-dependent |
+| **3F** | Tap | Windows Search | Linux Middle Click (`libinput` standard) | ℹ️ Linux convention |
+| **3F** | Swipe Up / Down | Task View ↔ Windows ↔ Desktop | Exact 3-state cycle (`winpad-taskview` + `_NET_SHOWING_DESKTOP`) | ✅ Exact |
+| **3F** | Swipe Left / Right | Interactive `Alt+Tab` (clamped ends) | Holds `Alt`, scrubs `Tab`/`Shift+Tab`, **stops at ends** | ✅ Exact |
+| **4F** | Swipe Left / Right | 1 desktop per swipe (Right = next) | 1 desktop per swipe (`workspace_direct`) + Fluent OSD | ✅ Exact |
+| **4F** | Swipe Up / Down | Task View ↔ Windows ↔ Desktop | Same exact 3-state cycle | ✅ Exact |
+
+---
+
+## 🪟 Live Task View & Fluent OSD
+
+Swipe up with **3 or 4 fingers** to open **`winpad-taskview`** — matching Windows 11's layout with **real-time `XComposite` window thumbnails**, a **luminous Fluent selection aura & top accent bar** on the selected card, an **`Active` window pill**, a **Virtual Desktops dock along the bottom** (with window indicator dots and click-to-switch), an **All Desktops** toggle, **instant type-to-filter search**, **cached ambient backdrop rendering**, and **0 MB idle RAM**.
 
 <div align="center">
 <img src="assets/taskview-preview.svg" alt="winpad-taskview preview" width="100%" />
+<br/><br/>
+<img src="assets/osd-preview.svg" alt="Fluent Desktop OSD preview" width="100%" />
 </div>
+
+### Task View Controls
+| Input | Action |
+|---|---|
+| **Left-click card** / **`Enter`** | Switch to window (auto-switches desktop & unminimizes if needed) |
+| **3-finger Left/Right** / **`←` `→`** | Select previous / next card (clamped cleanly at first & last card) |
+| **`Home` / `End`** | Jump to first / last visible window card |
+| **Type anywhere** / **`Backspace`** | Instant case-insensitive filter by window title or app name |
+| **Middle-click card** / **`×` button** | Close window cleanly and update Task View |
+| **`Ctrl + ←` / `→`** or **4-finger Left/Right** | Preview / switch Virtual Desktops inside Task View |
+| **`All Desktops`** pill | Toggle between active desktop and all open windows |
+| **`Esc`** / **Click backdrop** / **3F/4F Down** | Clear filter (1st `Esc`) or exit Task View |
 
 ---
 
 ## ⚡ Measured Footprint
 
-Observed on Ubuntu 22.04 / Xubuntu (`x86_64`, compiled with `gcc -O2 -flto` and stripped):
+Baseline measured on Ubuntu 22.04 / Xubuntu (`x86_64`, compiled with `gcc -O2 -flto` and stripped):
 
 | Component | Binary Size | Memory (RSS) | Idle CPU |
 |---|---:|---:|---:|
@@ -91,7 +125,7 @@ Observed on Ubuntu 22.04 / Xubuntu (`x86_64`, compiled with `gcc -O2 -flto` and 
 - Linux **X11** desktop session (`xfwm4`, Openbox, i3, MATE, etc. — EWMH compatible) using **`libinput`** (`xserver-xorg-input-libinput`)
 - Build dependencies (only needed once during compilation):
   ```bash
-  sudo apt update && sudo apt install -y gcc pkg-config libx11-dev libxtst-dev libxrandr-dev libxrender-dev libcairo2-dev libgtk-3-dev libwnck-3-dev libxcomposite-dev
+  sudo apt update && sudo apt install -y gcc make pkg-config libx11-dev libxtst-dev libxrandr-dev libxrender-dev libcairo2-dev libgtk-3-dev libwnck-3-dev libxcomposite-dev
   ```
   *(Note: `libxcomposite-dev` enables live window thumbnails; `Makefile` automatically falls back to icon-card mode if `xcomposite` is absent.)*
 
@@ -105,14 +139,18 @@ cd winpad-x11
 ./scripts/setup.sh
 ```
 
-**What `scripts/setup.sh` does:**
-1. Compiles (`-O2 -flto`) & strips `winpad-gestures` and `winpad-taskview` into `~/.local/bin/`, and installs the XFCE autostart entry (`~/.config/autostart/winpad-gestures.desktop`).
+**What [`scripts/setup.sh`](scripts/setup.sh) does:**
+1. Compiles (`-O2 -flto -Wall -Wextra -Werror`) & strips `winpad-gestures` and `winpad-taskview` into `~/.local/bin/`, and installs the XFCE autostart entry (`~/.config/autostart/winpad-gestures.desktop`).
 2. Installs `/etc/udev/rules.d/65-touchpad-uaccess.rules` (`TAG+="uaccess"` on `ID_INPUT_TOUCHPAD==1`) and triggers `udevadm` so the active user gets read access immediately **with no reboot or logout**.
-3. Writes clean Precision Touchpad defaults in `/etc/X11/xorg.conf.d/40-libinput.conf` and applies XFCE defaults (tap-to-click, `clickfinger`, natural scrolling, 4 workspaces, disables `mousewheel_rollup`).
+3. Writes clean Precision Touchpad defaults in `/etc/X11/xorg.conf.d/40-libinput.conf` and applies XFCE defaults (tap-to-click, `clickfinger`, natural scrolling, 4 workspaces, `cycle_minimized`, disables `mousewheel_rollup`).
 4. Auto-detects your touchpad (reads `ABS_MT_POSITION_X/Y` physical mm resolution) and launches `winpad-gestures` right away.
 
-To uninstall anytime:
+**Update or Uninstall anytime:**
 ```bash
+# Update to latest version (preserves your ~/.config/winpad-gestures.conf)
+git pull && ./scripts/setup.sh
+
+# Uninstall binaries & autostart entry
 make uninstall
 ```
 
@@ -145,8 +183,9 @@ three_finger_thresh_mm = 6.5
 three_finger_step_mm = 11.5
 three_finger_v_thresh_mm = 7.5
 
-# 4-finger horizontal swipe: workspace_direct (Windows 11 default) | workspace_natural | alt_tab | off
+# 4-finger horizontal swipe: workspace_direct (Windows 11 default: 1 swipe = 1 desktop) | workspace_natural | alt_tab | off
 four_finger_horiz = workspace_direct
+four_finger_scrub = false
 four_finger_thresh_mm = 7.5
 four_finger_step_mm = 15.0
 
@@ -157,11 +196,24 @@ taskview_cmd = ~/.local/bin/winpad-taskview
 </details>
 
 <details>
+<summary><strong>Architecture & How It Works</strong></summary>
+
+- **Direct kernel `evdev` reader (`src/winpad-gestures.c`):** Reads `ABS_MT_SLOT` / `ABS_MT_TRACKING_ID` / `ABS_MT_POSITION_X/Y` directly from `/dev/input/event*` using `poll()` (0% idle CPU) and scales deltas using the hardware's physical `resolution` (counts/mm). Because it reads `evdev` directly, 3/4-finger gestures work even on older `xserver-xorg-input-libinput` versions.
+- **Zero-spawn X11/EWMH actions:** Emits `Alt+Tab`, `XF86Back`/`Forward`, and navigation keys directly via `XTest`, queries `_NET_CLIENT_LIST` / `_NET_WM_WINDOW_TYPE` / `_NET_WM_STATE` for boundary-clamped `Alt+Tab`, switches workspaces via `_NET_CURRENT_DESKTOP`, and draws the 32-bit ARGB Fluent OSD using Cairo + XRandR.
+- **On-demand `winpad-taskview` (`src/winpad-taskview.c`):** Spawned only when Task View opens (`SIGUSR1` updates workspace on live desktop switch, `SIGTERM` / re-invocation toggles off), captures `XComposite` backing pixmaps before mapping, caches the backdrop surface, and exits cleanly when a window is chosen (`0 MB` idle RAM).
+
+</details>
+
+<details>
 <summary><strong>Troubleshooting & Diagnostics</strong></summary>
 
 - **Verify touchpad detection & permissions:**
   ```bash
   ~/.local/bin/winpad-gestures --check
+  ```
+- **Preview Primary-Monitor Fluent OSD:**
+  ```bash
+  ~/.local/bin/winpad-gestures --test-osd
   ```
 - **Run with live debug output:**
   ```bash
@@ -182,4 +234,4 @@ taskview_cmd = ~/.local/bin/winpad-taskview
 
 ## 📄 License
 
-MIT License — see [LICENSE](LICENSE).
+MIT License — see [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).

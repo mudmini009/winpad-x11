@@ -28,7 +28,7 @@
 #include <X11/keysym.h>
 #include <X11/XF86keysym.h>
 
-#define WINPAD_VERSION "1.3.1"
+#define WINPAD_VERSION "1.4.0"
 #define MAX_SLOTS 16
 #define ALT_WATCHDOG_MS 15000L
 #define THREE_F_SETTLE_MS 22L
@@ -36,6 +36,7 @@
 #define DROP_HYSTERESIS_MS 45L
 #define OSD_DURATION_MS 820L
 #define OSD_FADE_MS 140L
+#define OSD_FRAME_MS 15L
 #define OSD_W 320
 #define OSD_H 84
 #define BITS_PER_LONG (8 * sizeof(unsigned long))
@@ -73,6 +74,7 @@ typedef struct {
     double three_h_step_mm;
     double three_v_thresh_mm;
     FourHorizMode four_h_mode;
+    int four_h_scrub;
     double four_h_thresh_mm;
     double four_h_step_mm;
     double four_v_thresh_mm;
@@ -95,6 +97,10 @@ static Window g_root = None;
 static int g_debug = 0;
 static int g_alt_held = 0;
 static long g_alt_held_since = 0;
+static int g_alt_tab_idx = 0;
+static int g_alt_tab_count = 0;
+static int g_xfwm_cycle_workspaces = 0;
+static int g_xfwm_cycle_minimized = 1;
 
 /* Animated Fluent Desktop OSD state */
 static Window g_osd_win = None;
@@ -106,6 +112,7 @@ static int g_osd_argb = 0;
 static int g_osd_visible = 0;
 static long g_osd_shown_at = 0;
 static long g_osd_hide_at = 0;
+static long g_osd_last_render_ms = 0;
 static long g_osd_total = 4;
 static long g_osd_target_idx = 0;
 static double g_osd_anim_pos = 0.0;
@@ -122,7 +129,14 @@ static Atom g_atom_showing_desktop = None;
 static Atom g_atom_current_desktop = None;
 static Atom g_atom_num_desktops = None;
 static Atom g_atom_active_window = None;
+static Atom g_atom_client_list = None;
+static Atom g_atom_wm_desktop = None;
+static Atom g_atom_wm_state = None;
+static Atom g_atom_wm_state_skip_tb = None;
+static Atom g_atom_wm_state_hidden = None;
 static Atom g_atom_wm_type = None;
+static Atom g_atom_wm_type_normal = None;
+static Atom g_atom_wm_type_dialog = None;
 static Atom g_atom_wm_type_notif = None;
 
 static Config g_cfg;
@@ -152,6 +166,7 @@ static void hide_osd(void) {
         XFlush(g_dpy);
         g_osd_visible = 0;
         g_osd_hide_at = 0;
+        g_osd_last_render_ms = 0;
     }
 }
 
@@ -162,6 +177,8 @@ static void release_alt_if_held(void) {
         g_alt_held = 0;
         g_alt_held_since = 0;
     }
+    g_alt_tab_idx = 0;
+    g_alt_tab_count = 0;
 }
 
 static void cleanup_all(void) {
@@ -202,6 +219,33 @@ static void expand_home(const char *in, char *out, size_t outsz) {
     snprintf(out, outsz, "%s", in);
 }
 
+static int parse_bool(const char *v) {
+    return (strcmp(v, "true") == 0 || strcmp(v, "1") == 0 ||
+            strcmp(v, "yes") == 0 || strcmp(v, "on") == 0);
+}
+
+static void load_xfwm4_cycle_prefs(void) {
+    g_xfwm_cycle_workspaces = 0;
+    g_xfwm_cycle_minimized = 1;
+
+    char path[512];
+    expand_home("~/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml", path, sizeof(path));
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        if (strstr(line, "name=\"cycle_workspaces\"")) {
+            if (strstr(line, "value=\"true\"")) g_xfwm_cycle_workspaces = 1;
+            else if (strstr(line, "value=\"false\"")) g_xfwm_cycle_workspaces = 0;
+        } else if (strstr(line, "name=\"cycle_minimized\"")) {
+            if (strstr(line, "value=\"false\"")) g_xfwm_cycle_minimized = 0;
+            else if (strstr(line, "value=\"true\"")) g_xfwm_cycle_minimized = 1;
+        }
+    }
+    fclose(f);
+}
+
 static void load_config(void) {
     memset(&g_cfg, 0, sizeof(g_cfg));
     snprintf(g_cfg.device, sizeof(g_cfg.device), "auto");
@@ -215,9 +259,12 @@ static void load_config(void) {
     g_cfg.three_h_step_mm = 11.5;
     g_cfg.three_v_thresh_mm = 7.5;
     g_cfg.four_h_mode = FOUR_H_WORKSPACE_DIRECT;
+    g_cfg.four_h_scrub = 0;
     g_cfg.four_h_thresh_mm = 7.5;
     g_cfg.four_h_step_mm = 15.0;
     g_cfg.four_v_thresh_mm = 8.0;
+
+    load_xfwm4_cycle_prefs();
 
     char path[512];
     expand_home("~/.config/winpad-gestures.conf", path, sizeof(path));
@@ -272,12 +319,17 @@ static void load_config(void) {
             else if (strcmp(v, "workspace_natural") == 0) g_cfg.four_h_mode = FOUR_H_WORKSPACE_NATURAL;
             else if (strcmp(v, "alt_tab") == 0) g_cfg.four_h_mode = FOUR_H_ALTTAB;
             else g_cfg.four_h_mode = FOUR_H_WORKSPACE_DIRECT;
+        } else if (strcmp(k, "four_finger_scrub") == 0) {
+            g_cfg.four_h_scrub = parse_bool(v);
         } else if (strcmp(k, "four_finger_thresh_mm") == 0) {
             double val = atof(v);
             if (val >= 3.0 && val <= 80.0) {
                 g_cfg.four_h_thresh_mm = val;
                 g_cfg.four_v_thresh_mm = val + 0.5;
             }
+        } else if (strcmp(k, "four_finger_v_thresh_mm") == 0) {
+            double val = atof(v);
+            if (val >= 3.0 && val <= 80.0) g_cfg.four_v_thresh_mm = val;
         } else if (strcmp(k, "four_finger_step_mm") == 0) {
             double val = atof(v);
             if (val >= 6.0 && val <= 80.0) g_cfg.four_h_step_mm = val;
@@ -464,12 +516,19 @@ static void init_x11_state(void) {
     g_kc_fwd   = XKeysymToKeycode(g_dpy, XF86XK_Forward);
 #endif
 
-    g_atom_showing_desktop = XInternAtom(g_dpy, "_NET_SHOWING_DESKTOP", False);
-    g_atom_current_desktop = XInternAtom(g_dpy, "_NET_CURRENT_DESKTOP", False);
-    g_atom_num_desktops    = XInternAtom(g_dpy, "_NET_NUMBER_OF_DESKTOPS", False);
-    g_atom_active_window   = XInternAtom(g_dpy, "_NET_ACTIVE_WINDOW", False);
-    g_atom_wm_type         = XInternAtom(g_dpy, "_NET_WM_WINDOW_TYPE", False);
-    g_atom_wm_type_notif   = XInternAtom(g_dpy, "_NET_WM_WINDOW_TYPE_NOTIFICATION", False);
+    g_atom_showing_desktop  = XInternAtom(g_dpy, "_NET_SHOWING_DESKTOP", False);
+    g_atom_current_desktop  = XInternAtom(g_dpy, "_NET_CURRENT_DESKTOP", False);
+    g_atom_num_desktops     = XInternAtom(g_dpy, "_NET_NUMBER_OF_DESKTOPS", False);
+    g_atom_active_window    = XInternAtom(g_dpy, "_NET_ACTIVE_WINDOW", False);
+    g_atom_client_list      = XInternAtom(g_dpy, "_NET_CLIENT_LIST", False);
+    g_atom_wm_desktop       = XInternAtom(g_dpy, "_NET_WM_DESKTOP", False);
+    g_atom_wm_state         = XInternAtom(g_dpy, "_NET_WM_STATE", False);
+    g_atom_wm_state_skip_tb = XInternAtom(g_dpy, "_NET_WM_STATE_SKIP_TASKBAR", False);
+    g_atom_wm_state_hidden  = XInternAtom(g_dpy, "_NET_WM_STATE_HIDDEN", False);
+    g_atom_wm_type          = XInternAtom(g_dpy, "_NET_WM_WINDOW_TYPE", False);
+    g_atom_wm_type_normal   = XInternAtom(g_dpy, "_NET_WM_WINDOW_TYPE_NORMAL", False);
+    g_atom_wm_type_dialog   = XInternAtom(g_dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
+    g_atom_wm_type_notif    = XInternAtom(g_dpy, "_NET_WM_WINDOW_TYPE_NOTIFICATION", False);
 
     init_osd_window();
 }
@@ -517,8 +576,13 @@ static void render_osd_frame(long tnow) {
     if (clamped_target >= tiles) clamped_target = tiles - 1;
     if (clamped_target < 0) clamped_target = 0;
 
-    /* Smooth glide towards target index + fade-in / fade-out */
-    g_osd_anim_pos += ((double)clamped_target - g_osd_anim_pos) * 0.42;
+    /* Smooth time-compensated glide towards target index + fade-in / fade-out */
+    long dt_frame = (g_osd_last_render_ms > 0 && tnow > g_osd_last_render_ms)
+                        ? (tnow - g_osd_last_render_ms) : 16L;
+    if (dt_frame > 60L) dt_frame = 60L;
+    g_osd_last_render_ms = tnow;
+    double blend = 1.0 - exp(-0.032 * (double)dt_frame);
+    g_osd_anim_pos += ((double)clamped_target - g_osd_anim_pos) * blend;
     if (fabs((double)clamped_target - g_osd_anim_pos) < 0.015)
         g_osd_anim_pos = (double)clamped_target;
 
@@ -745,6 +809,151 @@ static int get_ewmh_cardinal(Atom prop, long *out_val) {
     return ok;
 }
 
+static int is_cyclable_window(Window w, unsigned long cur_desk) {
+    if (!g_xfwm_cycle_workspaces && g_atom_wm_desktop != None) {
+        Atom atype;
+        int afmt;
+        unsigned long nitems, bytes_after;
+        unsigned char *data = NULL;
+        if (XGetWindowProperty(g_dpy, w, g_atom_wm_desktop, 0, 1, False,
+                               XA_CARDINAL, &atype, &afmt, &nitems,
+                               &bytes_after, &data) == Success) {
+            int on_desk = 1;
+            if (data && nitems >= 1 && afmt == 32) {
+                unsigned long d = *(unsigned long *)data;
+                if (d != cur_desk && (d & 0xFFFFFFFFUL) != 0xFFFFFFFFUL)
+                    on_desk = 0;
+            }
+            if (data) XFree(data);
+            if (!on_desk) return 0;
+        }
+    }
+
+    int is_dialog_only = 0;
+    if (g_atom_wm_type != None) {
+        Atom atype;
+        int afmt;
+        unsigned long nitems, bytes_after;
+        unsigned char *data = NULL;
+        if (XGetWindowProperty(g_dpy, w, g_atom_wm_type, 0, 16, False,
+                               XA_ATOM, &atype, &afmt, &nitems,
+                               &bytes_after, &data) == Success) {
+            if (data && nitems >= 1 && afmt == 32) {
+                Atom *atoms = (Atom *)data;
+                int has_normal = 0, has_dialog = 0;
+                for (unsigned long i = 0; i < nitems; i++) {
+                    if (atoms[i] == g_atom_wm_type_normal) has_normal = 1;
+                    else if (atoms[i] == g_atom_wm_type_dialog) has_dialog = 1;
+                }
+                if (!has_normal && !has_dialog) {
+                    XFree(data);
+                    return 0;
+                }
+                is_dialog_only = (!has_normal && has_dialog);
+            }
+            if (data) XFree(data);
+        }
+    }
+
+    if (is_dialog_only) {
+        Window transient_for = None;
+        if (XGetTransientForHint(g_dpy, w, &transient_for) &&
+            transient_for != None && transient_for != g_root) {
+            return 0;
+        }
+    }
+
+    if (g_atom_wm_state != None) {
+        Atom atype;
+        int afmt;
+        unsigned long nitems, bytes_after;
+        unsigned char *data = NULL;
+        if (XGetWindowProperty(g_dpy, w, g_atom_wm_state, 0, 32, False,
+                               XA_ATOM, &atype, &afmt, &nitems,
+                               &bytes_after, &data) == Success) {
+            if (data && nitems >= 1 && afmt == 32) {
+                Atom *atoms = (Atom *)data;
+                for (unsigned long i = 0; i < nitems; i++) {
+                    if (atoms[i] == g_atom_wm_state_skip_tb) {
+                        XFree(data);
+                        return 0;
+                    }
+                    if (!g_xfwm_cycle_minimized && atoms[i] == g_atom_wm_state_hidden) {
+                        XFree(data);
+                        return 0;
+                    }
+                }
+            }
+            if (data) XFree(data);
+        }
+    }
+
+    return 1;
+}
+
+static int count_cyclable_windows(int *out_active_in_list) {
+    if (out_active_in_list) *out_active_in_list = 0;
+    if (!g_dpy || g_atom_client_list == None) return -1;
+    long cur_desk_l = 0;
+    get_ewmh_cardinal(g_atom_current_desktop, &cur_desk_l);
+    unsigned long cur_desk = (unsigned long)cur_desk_l;
+
+    Window active_win = None;
+    if (g_atom_active_window != None) {
+        Atom act_type;
+        int act_fmt;
+        unsigned long act_n = 0, act_after = 0;
+        unsigned char *act_data = NULL;
+        if (XGetWindowProperty(g_dpy, g_root, g_atom_active_window, 0, 1, False,
+                               XA_WINDOW, &act_type, &act_fmt, &act_n,
+                               &act_after, &act_data) == Success) {
+            if (act_data && act_n >= 1 && act_fmt == 32)
+                active_win = *(Window *)act_data;
+            if (act_data) XFree(act_data);
+        }
+    }
+
+    Atom atype;
+    int afmt;
+    unsigned long nitems = 0, bytes_after = 0;
+    unsigned char *data = NULL;
+    if (XGetWindowProperty(g_dpy, g_root, g_atom_client_list, 0, 1024, False,
+                           XA_WINDOW, &atype, &afmt, &nitems,
+                           &bytes_after, &data) != Success) {
+        return -1;
+    }
+    if (!data || afmt != 32) {
+        if (data) XFree(data);
+        return -1;
+    }
+
+    Window *wins = (Window *)data;
+    int count = 0;
+    for (unsigned long i = 0; i < nitems; i++) {
+        if (wins[i] != None && wins[i] != g_osd_win && is_cyclable_window(wins[i], cur_desk)) {
+            if (out_active_in_list && wins[i] == active_win)
+                *out_active_in_list = 1;
+            count++;
+        }
+    }
+    XFree(data);
+    return count;
+}
+
+static void step_alt_tab(int delta) {
+    if (delta > 0) {
+        if (g_alt_tab_count < 0 || g_alt_tab_idx + 1 < g_alt_tab_count) {
+            g_alt_tab_idx++;
+            send_tab_with_alt_held();
+        }
+    } else if (delta < 0) {
+        if (g_alt_tab_count < 0 || g_alt_tab_idx > 0) {
+            if (g_alt_tab_idx > 0) g_alt_tab_idx--;
+            send_shift_tab_with_alt_held();
+        }
+    }
+}
+
 static void send_ewmh_root_msg(Atom prop, long d0, long d1) {
     if (!g_dpy || prop == None) return;
     XEvent ev;
@@ -807,6 +1016,10 @@ static void spawn_cmd(const char *cmd) {
     if (!cmd || !cmd[0]) return;
     pid_t pid = fork();
     if (pid == 0) {
+        signal(SIGINT, SIG_DFL);
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGHUP, SIG_DFL);
+        signal(SIGCHLD, SIG_DFL);
         setsid();
         execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
         _exit(127);
@@ -920,12 +1133,28 @@ static void evaluate_three_finger_gesture(double res_x, double res_y, double acc
             *three_tv_scrub = 1;
             *step_anchor_x = accum_x;
         } else if (g_cfg.three_h_mode == THREE_H_SCRUB) {
+            int active_in_list = 0;
+            int wcount = count_cyclable_windows(&active_in_list);
+            if (wcount == 0) {
+                *gesture_fired = 1;
+                return;
+            }
+            g_alt_tab_count = wcount;
+            g_alt_tab_idx = 0;
             XTestFakeKeyEvent(g_dpy, g_kc_alt, True, CurrentTime);
             XFlush(g_dpy);
             g_alt_held = 1;
             g_alt_held_since = tnow;
-            if (forward) send_tab_with_alt_held();
-            else send_shift_tab_with_alt_held();
+            if (forward) {
+                if (active_in_list && (g_alt_tab_count < 0 || g_alt_tab_count > 1))
+                    g_alt_tab_idx = 1;
+                send_tab_with_alt_held();
+            } else {
+                /* Left swipe from index 0: open switcher clamped at first window (no wrap to last) */
+                send_tab_with_alt_held();
+                if (active_in_list && g_alt_tab_count != 1)
+                    send_shift_tab_with_alt_held();
+            }
             *step_anchor_x = accum_x;
         } else {
             send_alt_tab_once(dir_right);
@@ -1066,6 +1295,7 @@ int main(int argc, char **argv) {
         int gesture_fired = 0;
         int three_tv_scrub = 0;
         int four_ws_scrub = 0;
+        int four_f_locked = 0;
         int two_f_scroll_locked = 0;
         int two_f_triggered = 0;
 
@@ -1079,7 +1309,7 @@ int main(int argc, char **argv) {
             if (g_osd_visible) {
                 if (tnow_loop >= g_osd_hide_at)
                     hide_osd();
-                else
+                else if (tnow_loop - g_osd_last_render_ms >= OSD_FRAME_MS)
                     render_osd_frame(tnow_loop);
             }
 
@@ -1098,10 +1328,11 @@ int main(int argc, char **argv) {
                 long tnow = now_ms();
                 if (g_osd_visible) {
                     if (tnow >= g_osd_hide_at) hide_osd();
-                    else render_osd_frame(tnow);
+                    else if (tnow - g_osd_last_render_ms >= OSD_FRAME_MS) render_osd_frame(tnow);
                 }
                 if (mode_fingers == 3 && !gesture_fired && !g_alt_held && !three_tv_scrub &&
-                    drop_pending_since == 0 && (tnow - gesture_start_ms) >= THREE_F_SETTLE_MS) {
+                    !four_f_locked && drop_pending_since == 0 &&
+                    (tnow - gesture_start_ms) >= THREE_F_SETTLE_MS) {
                     evaluate_three_finger_gesture(res_x, res_y, accum_x, accum_y,
                                                   &step_anchor_x, &gesture_fired,
                                                   &three_tv_scrub, tnow);
@@ -1110,6 +1341,7 @@ int main(int argc, char **argv) {
                     release_alt_if_held();
                     drop_pending_since = 0;
                     if (mode_fingers > 2) mode_fingers = 2;
+                    if (four_f_locked) gesture_fired = 1;
                 }
                 if (g_alt_held && (tnow - g_alt_held_since) >= ALT_WATCHDOG_MS)
                     release_alt_if_held();
@@ -1153,6 +1385,26 @@ int main(int argc, char **argv) {
                     } else if (ev->code == BTN_TOOL_QUINTTAP) {
                         if (ev->value) tool_mask |= (1U << 5); else tool_mask &= ~(1U << 5);
                     }
+                } else if (ev->type == EV_SYN && ev->code == SYN_DROPPED) {
+                    release_alt_if_held();
+                    for (int s = 0; s < MAX_SLOTS; s++) {
+                        slots[s].tracking_id = -1;
+                        slots[s].was_active = 0;
+                    }
+                    tool_mask = 0;
+                    mode_fingers = 0;
+                    peak_fingers = 0;
+                    touch_start_ms = 0;
+                    drop_pending_since = 0;
+                    accum_x = accum_y = 0.0;
+                    step_anchor_x = 0.0;
+                    gesture_fired = 0;
+                    three_tv_scrub = 0;
+                    four_ws_scrub = 0;
+                    four_f_locked = 0;
+                    two_f_scroll_locked = 0;
+                    two_f_triggered = 0;
+                    gesture_start_ms = 0;
                 } else if (ev->type == EV_SYN && ev->code == SYN_REPORT) {
                     int n_active = 0;
                     double sum_dx = 0.0, sum_dy = 0.0;
@@ -1194,6 +1446,7 @@ int main(int argc, char **argv) {
                         gesture_fired = 0;
                         three_tv_scrub = 0;
                         four_ws_scrub = 0;
+                        four_f_locked = 0;
                         two_f_scroll_locked = 0;
                         two_f_triggered = 0;
                         gesture_start_ms = 0;
@@ -1217,7 +1470,7 @@ int main(int argc, char **argv) {
                             accum_x = accum_y = 0.0;
                             step_anchor_x = 0.0;
                         }
-                        gesture_fired = 0;
+                        gesture_fired = four_f_locked ? 1 : 0;
                         three_tv_scrub = 0;
                         four_ws_scrub = 0;
                         gesture_start_ms = tnow;
@@ -1232,7 +1485,7 @@ int main(int argc, char **argv) {
                                 drop_pending_since = 0;
                                 accum_x = accum_y = 0.0;
                                 step_anchor_x = 0.0;
-                                gesture_fired = 0;
+                                gesture_fired = four_f_locked ? 1 : 0;
                                 three_tv_scrub = 0;
                                 four_ws_scrub = 0;
                                 gesture_start_ms = tnow;
@@ -1276,17 +1529,15 @@ int main(int argc, char **argv) {
                         }
                     }
 
-                    /* 3-finger gestures -> continuous Alt+Tab / Task View scrub + 3-state Up/Down */
+                    /* 3-finger gestures -> boundary-clamped Alt+Tab / Task View scrub + 3-state Up/Down */
                     else if (mode_fingers == 3) {
                         if (g_alt_held) {
                             double step_dx_mm = (accum_x - step_anchor_x) / res_x;
                             if (step_dx_mm >= g_cfg.three_h_step_mm) {
-                                if (g_cfg.three_h_invert) send_shift_tab_with_alt_held();
-                                else send_tab_with_alt_held();
+                                step_alt_tab(g_cfg.three_h_invert ? -1 : 1);
                                 step_anchor_x = accum_x;
                             } else if (step_dx_mm <= -g_cfg.three_h_step_mm) {
-                                if (g_cfg.three_h_invert) send_tab_with_alt_held();
-                                else send_shift_tab_with_alt_held();
+                                step_alt_tab(g_cfg.three_h_invert ? 1 : -1);
                                 step_anchor_x = accum_x;
                             }
                         } else if (three_tv_scrub) {
@@ -1298,14 +1549,15 @@ int main(int argc, char **argv) {
                                 send_key_combo(0, g_cfg.three_h_invert ? g_kc_right : g_kc_left);
                                 step_anchor_x = accum_x;
                             }
-                        } else if (!gesture_fired && (tnow - gesture_start_ms) >= THREE_F_SETTLE_MS) {
+                        } else if (!gesture_fired && !four_f_locked &&
+                                   (tnow - gesture_start_ms) >= THREE_F_SETTLE_MS) {
                             evaluate_three_finger_gesture(res_x, res_y, accum_x, accum_y,
                                                           &step_anchor_x, &gesture_fired,
                                                           &three_tv_scrub, tnow);
                         }
                     }
 
-                    /* 4-finger gestures -> continuous multi-desktop scrub + 3-state Up/Down */
+                    /* 4-finger gestures -> 1 desktop per swipe (Windows default) + 3-state Up/Down */
                     else if (mode_fingers == 4) {
                         if (four_ws_scrub) {
                             double step_dx_mm = (accum_x - step_anchor_x) / res_x;
@@ -1322,6 +1574,7 @@ int main(int argc, char **argv) {
                             if (g_cfg.four_h_mode != FOUR_H_OFF &&
                                 adx >= g_cfg.four_h_thresh_mm && adx > 1.30 * ady) {
                                 int dir_right = (dx_mm > 0.0);
+                                four_f_locked = 1;
                                 if (g_cfg.four_h_mode == FOUR_H_ALTTAB) {
                                     gesture_fired = 1;
                                     send_alt_tab_once(dir_right);
@@ -1330,8 +1583,12 @@ int main(int argc, char **argv) {
                                                     ? (dir_right ? -1 : 1)
                                                     : (dir_right ? 1 : -1);
                                     if (switch_workspace(delta)) {
-                                        four_ws_scrub = 1;
-                                        step_anchor_x = accum_x;
+                                        if (g_cfg.four_h_scrub) {
+                                            four_ws_scrub = 1;
+                                            step_anchor_x = accum_x;
+                                        } else {
+                                            gesture_fired = 1;
+                                        }
                                     } else {
                                         gesture_fired = 1;
                                         send_alt_tab_once(dir_right);
@@ -1339,9 +1596,11 @@ int main(int argc, char **argv) {
                                 }
                             } else if (-dy_mm >= g_cfg.four_v_thresh_mm && ady > 1.30 * adx) {
                                 gesture_fired = 1;
+                                four_f_locked = 1;
                                 handle_vertical_gesture(1);
                             } else if (dy_mm >= g_cfg.four_v_thresh_mm && ady > 1.30 * adx) {
                                 gesture_fired = 1;
+                                four_f_locked = 1;
                                 handle_vertical_gesture(0);
                             }
                         }

@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="170" viewBox="0 0 900 170" fill="none">
+  <defs>
+    <linearGradient id="screenbg" x1="0" y1="0" x2="900" y2="170" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0d1117"/>
+      <stop offset="50%" stop-color="#111726"/>
+      <stop offset="100%" stop-color="#0d1117"/>
+    </linearGradient>
+    <linearGradient id="pillbg" x1="0" y1="0" x2="320" y2="84" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#141928" stop-opacity="0.96"/>
+      <stop offset="100%" stop-color="#0e111d" stop-opacity="0.98"/>
+    </linearGradient>
+    <linearGradient id="pillbrd" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#7dcfff" stop-opacity="0.55"/>
+      <stop offset="50%" stop-color="#7aa2f7" stop-opacity="0.65"/>
+      <stop offset="100%" stop-color="#bb9af7" stop-opacity="0.55"/>
+    </linearGradient>
+    <linearGradient id="tilefill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7dcfff" stop-opacity="0.24"/>
+      <stop offset="100%" stop-color="#bb9af7" stop-opacity="0.24"/>
+    </linearGradient>
+    <linearGradient id="tilebrd" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#7dcfff"/>
+      <stop offset="100%" stop-color="#bb9af7"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="900" height="170" rx="16" fill="url(#screenbg)"/>
+  <rect x="0.5" y="0.5" width="899" height="169" rx="15.5" stroke="#ffffff" stroke-opacity="0.10"/>
+
+  <!-- Left label -->
+  <text x="36" y="58" fill="#f1f5f9" font-family="Segoe UI, Ubuntu, sans-serif" font-size="16" font-weight="700">Primary-Monitor Fluent OSD</text>
+  <text x="36" y="82" fill="#94a3b8" font-family="Segoe UI, Ubuntu, sans-serif" font-size="12.5">32-bit ARGB double-buffered overlay via XRandR + Cairo</text>
+  <text x="36" y="103" fill="#64748b" font-family="Segoe UI, Ubuntu, sans-serif" font-size="11.5">• 60fps glide animation on desktop switches (auto-fits up to 8 desktops)</text>
+  <text x="36" y="122" fill="#64748b" font-family="Segoe UI, Ubuntu, sans-serif" font-size="11.5">• Centered cleanly on your primary monitor (never split across dual monitors)</text>
+
+  <!-- Actual 320x84 OSD Pill Replica -->
+  <g transform="translate(544, 43)">
+    <rect x="-2" y="-2" width="324" height="88" rx="22" stroke="#7aa2f7" stroke-opacity="0.15" stroke-width="3"/>
+    <rect x="1" y="1" width="318" height="82" rx="20" fill="url(#pillbg)" stroke="url(#pillbrd)" stroke-width="1.4"/>
+
+    <text x="148" y="26" text-anchor="end" fill="#f5f7ff" font-family="Segoe UI, Ubuntu, sans-serif" font-size="14.5" font-weight="700">Desktop 2</text>
+    <text x="155" y="26" fill="#9eb2d6" font-family="Segoe UI, Ubuntu, sans-serif" font-size="12">/ 4</text>
+
+    <!-- Desktop tiles 1..4 -->
+    <g transform="translate(37, 39)">
+      <rect x="0" y="0" width="54" height="28" rx="7" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.10"/>
+      <text x="27" y="18" text-anchor="middle" fill="#d9e6ff" fill-opacity="0.48" font-family="Segoe UI, sans-serif" font-size="11.5" font-weight="700">1</text>
+
+      <rect x="64" y="0" width="54" height="28" rx="7" fill="url(#tilefill)" stroke="url(#tilebrd)" stroke-width="2"/>
+      <text x="91" y="18" text-anchor="middle" fill="#eef4ff" font-family="Segoe UI, sans-serif" font-size="11.5" font-weight="700">2</text>
+
+      <rect x="128" y="0" width="54" height="28" rx="7" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.10"/>
+      <text x="155" y="18" text-anchor="middle" fill="#d9e6ff" fill-opacity="0.48" font-family="Segoe UI, sans-serif" font-size="11.5" font-weight="700">3</text>
+
+      <rect x="192" y="0" width="54" height="28" rx="7" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.10"/>
+      <text x="219" y="18" text-anchor="middle" fill="#d9e6ff" fill-opacity="0.48" font-family="Segoe UI, sans-serif" font-size="11.5" font-weight="700">4</text>
+    </g>
+  </g>
+</svg>

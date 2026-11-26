@@ -1,0 +1,39 @@
+name: Build Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc make pkg-config \
+            libx11-dev libxtst-dev libxrandr-dev libxrender-dev \
+            libcairo2-dev libgtk-3-dev libwnck-3-dev libxcomposite-dev
+
+      - name: Build with XComposite (-Wall -Wextra -Werror)
+        run: |
+          make strip
+          ./winpad-gestures --version
+          ./winpad-gestures --help
+
+      - name: Build fallback icon-card mode (without XComposite)
+        run: |
+          make clean
+          gcc -O2 -flto -Wall -Wextra -Werror $(pkg-config --cflags cairo-xlib xrender xrandr x11 xtst) \
+            src/winpad-gestures.c -o winpad-gestures $(pkg-config --libs cairo-xlib xrender xrandr x11 xtst) -lm
+          gcc -O2 -flto -Wall -Wextra -Werror $(pkg-config --cflags gtk+-3.0 libwnck-3.0) \
+            src/winpad-taskview.c -o winpad-taskview $(pkg-config --libs gtk+-3.0 libwnck-3.0) -lm
+          make clean
+
+      - name: Validate shell script syntax
+        run: bash -n scripts/setup.sh
