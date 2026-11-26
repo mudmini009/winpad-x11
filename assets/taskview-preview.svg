@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="440" viewBox="0 0 900 440" fill="none">
+  <defs>
+    <linearGradient id="ovbg" x1="0" y1="0" x2="900" y2="440" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0e1018"/>
+      <stop offset="50%" stop-color="#121520"/>
+      <stop offset="100%" stop-color="#0d0f17"/>
+    </linearGradient>
+    <linearGradient id="termgrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#161b26"/>
+      <stop offset="100%" stop-color="#10141c"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="900" height="440" rx="16" fill="url(#ovbg)"/>
+  <rect x="0.5" y="0.5" width="899" height="439" rx="15.5" stroke="#ffffff" stroke-opacity="0.12"/>
+
+  <!-- Top Header -->
+  <text x="36" y="46" fill="#eef2ff" font-family="Segoe UI, Ubuntu, sans-serif" font-size="22" font-weight="700">Task View</text>
+  <text x="36" y="65" fill="#94a3b8" font-family="Segoe UI, Ubuntu, sans-serif" font-size="12">4 open windows  •  4 desktops</text>
+
+  <!-- Desktop Pills -->
+  <g transform="translate(510, 32)" font-family="Segoe UI, Ubuntu, sans-serif" font-size="12" font-weight="600">
+    <rect x="0" y="0" width="84" height="28" rx="14" fill="#7aa2f7" fill-opacity="0.28" stroke="#7aa2f7"/>
+    <text x="42" y="18" text-anchor="middle" fill="#ffffff">Desktop 1</text>
+
+    <rect x="92" y="0" width="84" height="28" rx="14" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.12"/>
+    <text x="134" y="18" text-anchor="middle" fill="#cbd5e1">Desktop 2</text>
+
+    <rect x="184" y="0" width="84" height="28" rx="14" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.12"/>
+    <text x="226" y="18" text-anchor="middle" fill="#cbd5e1">Desktop 3</text>
+
+    <rect x="276" y="0" width="84" height="28" rx="14" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.12"/>
+    <text x="318" y="18" text-anchor="middle" fill="#cbd5e1">Desktop 4</text>
+  </g>
+
+  <!-- Card 1 (Active Window) -->
+  <g transform="translate(36, 94)">
+    <rect width="262" height="192" rx="14" fill="#22293c" stroke="#7aa2f7" stroke-width="2"/>
+    <circle cx="22" cy="22" r="7" fill="#7aa2f7"/>
+    <text x="36" y="26" fill="#f1f5f9" font-family="Segoe UI, sans-serif" font-size="12.5" font-weight="600">Brave Browser</text>
+    <rect x="206" y="13" width="24" height="17" rx="5" fill="#ffffff" fill-opacity="0.09"/>
+    <text x="218" y="25" text-anchor="middle" fill="#a5b4fc" font-family="Segoe UI, sans-serif" font-size="10" font-weight="700">D1</text>
+    <text x="244" y="26" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="15" font-weight="700">×</text>
+
+    <!-- Mock browser live thumbnail -->
+    <rect x="12" y="40" width="238" height="138" rx="9" fill="#131823" stroke="#ffffff" stroke-opacity="0.09"/>
+    <rect x="12" y="40" width="238" height="22" rx="9" fill="#1d2433"/>
+    <rect x="30" y="46" width="140" height="10" rx="5" fill="#2c3548"/>
+    <rect x="26" y="76" width="110" height="14" rx="4" fill="#7aa2f7" fill-opacity="0.45"/>
+    <rect x="26" y="100" width="208" height="8" rx="4" fill="#334155"/>
+    <rect x="26" y="116" width="184" height="8" rx="4" fill="#334155"/>
+    <rect x="26" y="136" width="96" height="26" rx="6" fill="#1e293b" stroke="#7dcfff" stroke-opacity="0.35"/>
+    <rect x="132" y="136" width="96" height="26" rx="6" fill="#1e293b"/>
+  </g>
+
+  <!-- Card 2 (Terminal) -->
+  <g transform="translate(319, 94)">
+    <rect width="262" height="192" rx="14" fill="#1a1e2a" stroke="#ffffff" stroke-opacity="0.12"/>
+    <rect x="15" y="15" width="14" height="14" rx="3" fill="#22c55e" fill-opacity="0.85"/>
+    <text x="36" y="26" fill="#f1f5f9" font-family="Segoe UI, sans-serif" font-size="12.5" font-weight="600">xfce4-terminal</text>
+    <rect x="206" y="13" width="24" height="17" rx="5" fill="#ffffff" fill-opacity="0.09"/>
+    <text x="218" y="25" text-anchor="middle" fill="#a5b4fc" font-family="Segoe UI, sans-serif" font-size="10" font-weight="700">D1</text>
+    <text x="244" y="26" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="15" font-weight="700">×</text>
+
+    <rect x="12" y="40" width="238" height="138" rx="9" fill="url(#termgrad)" stroke="#ffffff" stroke-opacity="0.09"/>
+    <text x="24" y="64" fill="#9ece6a" font-family="monospace" font-size="11">$ winpad-gestures --check</text>
+    <text x="24" y="82" fill="#7dcfff" font-family="monospace" font-size="10.5">TOUCHPAD_OK 5-finger</text>
+    <text x="24" y="102" fill="#9ece6a" font-family="monospace" font-size="11">$ ps -o rss,comm</text>
+    <text x="24" y="120" fill="#cbd5e1" font-family="monospace" font-size="10.5">2988  winpad-gestures</text>
+    <text x="24" y="142" fill="#bb9af7" font-family="monospace" font-size="10.5">0.0% CPU idle</text>
+  </g>
+
+  <!-- Card 3 (Desktop 2 Minimized/Background) -->
+  <g transform="translate(602, 94)">
+    <rect width="262" height="192" rx="14" fill="#1a1e2a" stroke="#ffffff" stroke-opacity="0.12"/>
+    <rect x="15" y="15" width="14" height="14" rx="4" fill="#f59e0b" fill-opacity="0.85"/>
+    <text x="36" y="26" fill="#f1f5f9" font-family="Segoe UI, sans-serif" font-size="12.5" font-weight="600">Thunar File Manager</text>
+    <rect x="206" y="13" width="24" height="17" rx="5" fill="#ffffff" fill-opacity="0.09"/>
+    <text x="218" y="25" text-anchor="middle" fill="#a5b4fc" font-family="Segoe UI, sans-serif" font-size="10" font-weight="700">D2</text>
+    <text x="244" y="26" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="15" font-weight="700">×</text>
+
+    <rect x="12" y="40" width="238" height="138" rx="9" fill="#121520" stroke="#ffffff" stroke-opacity="0.09"/>
+    <rect x="106" y="74" width="50" height="40" rx="8" fill="#f59e0b" fill-opacity="0.22" stroke="#f59e0b" stroke-opacity="0.7"/>
+    <path d="M114 84 L126 84 L130 89 L148 89 L148 106 L114 106 Z" fill="#fbbf24" fill-opacity="0.85"/>
+    <text x="131" y="154" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="11" font-weight="700">Desktop 2</text>
+  </g>
+
+  <!-- Footer -->
+  <text x="450" y="408" text-anchor="middle" fill="#94a3b8" font-family="Segoe UI, Ubuntu, sans-serif" font-size="12">
+    Click or Enter to switch  •  Type to filter  •  Middle-click / × to close  •  Esc or Swipe Down to exit
+  </text>
+</svg>

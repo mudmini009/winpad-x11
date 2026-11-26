@@ -5,10 +5,16 @@ PREFIX  ?= $(HOME)/.local
 BINDIR  := $(PREFIX)/bin
 CONFDIR := $(HOME)/.config
 
-GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 libwnck-3.0)
-GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 libwnck-3.0)
+HAS_XCOMP := $(shell pkg-config --exists xcomposite 2>/dev/null && echo 1 || echo 0)
+ifeq ($(HAS_XCOMP),1)
+  TV_CFLAGS := -DHAVE_XCOMPOSITE $(shell pkg-config --cflags gtk+-3.0 libwnck-3.0 xcomposite x11)
+  TV_LIBS   := $(shell pkg-config --libs gtk+-3.0 libwnck-3.0 xcomposite x11)
+else
+  TV_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 libwnck-3.0)
+  TV_LIBS   := $(shell pkg-config --libs gtk+-3.0 libwnck-3.0)
+endif
 
-.PHONY: all build install install-config strip clean
+.PHONY: all build install strip clean
 
 all: build
 
@@ -18,7 +24,7 @@ winpad-gestures: src/winpad-gestures.c
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) -lX11 -lXtst -lm
 
 winpad-taskview: src/winpad-taskview.c
-	$(CC) $(CFLAGS) $(GTK_CFLAGS) $< -o $@ $(LDFLAGS) $(GTK_LIBS)
+	$(CC) $(CFLAGS) $(TV_CFLAGS) $< -o $@ $(LDFLAGS) $(TV_LIBS) -lm
 
 strip: build
 	strip --strip-unneeded winpad-gestures winpad-taskview

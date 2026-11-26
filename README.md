@@ -1,42 +1,101 @@
-# winpad-x11
+<div align="center">
 
-Ultra-lightweight **Windows 10/11 Precision Touchpad** gestures for **Linux X11 / XFCE** written in pure C.
+<img src="assets/banner.svg" alt="winpad-x11 banner" width="100%" />
 
-Zero Python/Ruby runtimes, zero `xdotool` subprocess spawning, **31 KB** stripped binaries, **~3 MB RSS**, and **0.0% idle CPU**.
+<br/><br/>
 
-## Why `winpad-x11`?
+[![Language](https://img.shields.io/badge/language-C11-555555?style=for-the-badge&logo=c&logoColor=white)](src/)
+[![Platform](https://img.shields.io/badge/X11-XFCE%20%7C%20EWMH-7aa2f7?style=for-the-badge&logo=linux&logoColor=white)](#requirements)
+[![Footprint](https://img.shields.io/badge/daemon%20RAM-~3%20MB-9ece6a?style=for-the-badge)](#measured-footprint)
+[![Idle CPU](https://img.shields.io/badge/idle%20CPU-0.0%25-7dcfff?style=for-the-badge)](#measured-footprint)
+[![License](https://img.shields.io/badge/license-MIT-bb9af7?style=for-the-badge)](LICENSE)
 
-On many X11 desktops (especially Xubuntu / XFCE 4.16 with `xserver-xorg-input-libinput < 1.3`), 3-finger and 4-finger touchpad gestures are ignored out of the box, and Ubuntu's default `apt install touchegg` installs the legacy 1.x uTouch package that does not work with `libinput`.
+**Bring genuine Windows 10/11 Precision Touchpad ergonomics to Linux X11 & XFCE — in pure C, with zero runtime bloat.**
 
-| Project | Language / Stack | Runtime Deps | Windows 3-State Up/Down | Interactive Alt+Tab Scrub | 2-Finger Back/Forward |
-|---|---|---|---|---|---|
-| **winpad-x11** | **Pure C (`evdev` + `X11`/`XTest`, ~3 MB RSS, 31 KB binaries)** | **None** | **Yes** | **Yes (XKB layout-safe)** | **Yes (app-aware)** |
-| Touchégg v2 | C++ daemon + X11 client | PPA / libinput / pugixml / GTK | No | Partial | No |
-| libinput-gestures | Python + shell wrapper | `libinput-tools`, `xdotool` | No | No | No |
-| Fusuma | Ruby gem | Ruby, `libinput-tools`, `xdotool` | No | No | No |
-| xgestured / gebaar | C / C++ daemon | `libinput-dev`, `xdotool` | No | No | No |
+[Quick Install](#-quick-install) • [Gesture Map](#-gesture-map) • [Task View](#-live-task-view) • [Why winpad-x11?](#-why-winpad-x11) • [Configuration](#-configuration)
 
-## Gestures Included
+</div>
 
-| Gesture | Action |
-|---|---|
-| **1-finger tap / drag** | Left click & tap-and-drag (handled natively via `libinput`) |
-| **2-finger tap / scroll** | Right click & Natural Scrolling (handled natively via `libinput`) |
-| **2-finger horizontal flick** | Browser / File Manager **Back & Forward** (`XF86Back` / `XF86Forward`; `Alt+Left`/`Right` in IDEs; disabled in terminals; locked out during vertical scroll) |
-| **3-finger swipe Left / Right** | **Interactive `Alt+Tab` scrubbing** — holds `Alt` while sliding between windows, releases on lift (preserves multi-language XKB layouts like `grp:alt_shift_toggle`) |
-| **3-finger swipe Up / Down** | **Exact Windows 10/11 3-state cycle:** `Task View` ↔ `Normal Windows` ↔ `Show Desktop` (swiping Up after Show Desktop restores all windows; swiping Down while Task View is open closes Task View) |
-| **4-finger swipe Left / Right** | Switch Virtual Desktops / Workspaces (`_NET_CURRENT_DESKTOP`, falls back to `Alt+Tab` on single-workspace setups) |
-| **4-finger swipe Up / Down** | Same `Task View` ↔ `Normal` ↔ `Show Desktop` cycle |
+---
 
-## Requirements
+## ✨ What Makes `winpad-x11` Different?
 
-- Linux X11 session (`xfwm4` / EWMH-compatible window manager) with `libinput` (`xserver-xorg-input-libinput`)
-- Build dependencies (only needed during compile):
+Most Linux X11 gesture tools either run heavy scripting runtimes (Ruby/Python), spawn `xdotool` child processes on every swipe, or fail on Ubuntu/Xubuntu (`xserver-xorg-input-libinput < 1.3` doesn't forward 3/4-finger gestures over XInput2, and `apt install touchegg` on Ubuntu 22.04 pulls an outdated `1.1.1` package that ignores `libinput`).
+
+**`winpad-x11` solves all of it natively in two tiny compiled binaries:**
+
+| Feature | `winpad-x11` | Touchégg v2 | `libinput-gestures` | Fusuma | `xgestured` / `gebaar` |
+|---|:---:|:---:|:---:|:---:|:---:|
+| **Stack** | **Pure C (`evdev` + `X11`/`XTest`)** | C++ daemon + client | Python + pipe | Ruby gem | C / C++ daemon |
+| **Runtime deps** | **None** | PPA / pugixml / GTK | `libinput-tools`, `xdotool` | Ruby, `libinput-tools`, `xdotool` | `libinput-dev`, `xdotool` |
+| **Windows 3-state Up/Down cycle** | **Yes** | No | No | No | No |
+| **Interactive `Alt+Tab` scrubbing** | **Yes** (holds `Alt` while sliding) | Partial | No | No | No |
+| **Multi-language XKB layout safe** | **Yes** (`grp:alt_shift_toggle` safe) | No | No | No | No |
+| **2-finger Back/Forward flick** | **Yes** (app-aware via `WM_CLASS`) | No | No | No | No |
+| **Built-in Live Task View UI** | **Yes** (`XComposite` previews) | No | No | No | No |
+| **Instant permission without logout** | **Yes** (`udev` `uaccess` rule) | Root service | Requires `input` group + relogin | Requires `input` group + relogin | Requires `input` group + relogin |
+
+---
+
+## 🎯 Gesture Map
+
+<div align="center">
+<img src="assets/gestures.svg" alt="Precision Gesture Map" width="100%" />
+</div>
+
+### Exact Windows 10/11 3-State Vertical Cycle
+Unlike simple toggle scripts, 3-finger & 4-finger vertical swipes follow the exact Windows Precision Touchpad state machine:
+
+```text
+  [ Task View (Live Previews) ]  <─── Up / Down ───>  [ Normal Windows ]  <─── Down / Up ───>  [ Show Desktop ]
+```
+
+- **Normal windows → Swipe Down:** Minimizes all windows (**Show Desktop**)
+- **Show Desktop → Swipe Up:** **Restores your open windows** (does not jump into Task View)
+- **Normal windows → Swipe Up:** Opens **Task View**
+- **Task View open → Swipe Down:** Closes Task View back to your windows
+
+### Smart Responsiveness & Anti-Misfire Guards
+- **45 ms downward-bounce hysteresis:** Rapid finger jitter or staggered liftoff never resets a swipe or drops `Alt+Tab` mid-gesture.
+- **Terminal-safe 2-finger Back/Forward:** Checks active window `WM_CLASS` via X11—sends `XF86Back`/`XF86Forward` to browsers & file managers, `Alt+Left`/`Alt+Right` to IDEs, and stays silent in terminals.
+- **Scroll lock protection:** Vertical 2-finger scrolling locks out horizontal Back/Forward flicks (`> 5.5 mm` vertical motion), preventing accidental navigation while scrolling.
+- **XKB layout protection:** Saves and restores active XKB group via `XkbLockGroup` so `Alt+Shift+Tab` never accidentally flips multi-language layouts (e.g. `grp:alt_shift_toggle`).
+
+---
+
+## 🪟 Live Task View
+
+Swipe up with **3 or 4 fingers** to open **`winpad-taskview`** — a sleek, Fluent-styled overview with **real-time `XComposite` window thumbnails**, clickable **Desktop 1–4 switcher pills**, **type-to-filter search**, and **0 MB idle RAM** (it only runs while open and exits the instant you pick a window or close it).
+
+<div align="center">
+<img src="assets/taskview-preview.svg" alt="winpad-taskview preview" width="100%" />
+</div>
+
+---
+
+## ⚡ Measured Footprint
+
+Observed on Ubuntu 22.04 / Xubuntu (`x86_64`, compiled with `gcc -O2 -flto` and stripped):
+
+| Component | Binary Size | Memory (RSS) | Idle CPU |
+|---|---:|---:|---:|
+| `winpad-gestures` (background daemon) | **31 KB** | **~2.9 MB (`2988 KB`)** | **0.0%** (`poll()`) |
+| `winpad-taskview` (on-demand Task View) | **43 KB** | **0 MB idle** (exits on close) | **0.0%** |
+
+---
+
+## 📋 Requirements
+
+- Linux **X11** desktop session (`xfwm4`, Openbox, i3, MATE, etc. — EWMH compatible) using **`libinput`** (`xserver-xorg-input-libinput`)
+- Build dependencies (only needed once during compilation):
   ```bash
-  sudo apt update && sudo apt install -y gcc pkg-config libx11-dev libxtst-dev libgtk-3-dev libwnck-3-dev
+  sudo apt update && sudo apt install -y gcc pkg-config libx11-dev libxtst-dev libgtk-3-dev libwnck-3-dev libxcomposite-dev
   ```
+  *(Note: `libxcomposite-dev` enables live window thumbnails; `Makefile` automatically falls back to icon-card mode if `xcomposite` is absent.)*
 
-## Quick Install (Xubuntu / XFCE / X11)
+---
+
+## 🚀 Quick Install
 
 ```bash
 git clone https://github.com/mudmini009/winpad-x11.git
@@ -44,24 +103,18 @@ cd winpad-x11
 ./scripts/setup.sh
 ```
 
-`scripts/setup.sh` will:
-1. Build and strip `winpad-gestures` and `winpad-taskview` into `~/.local/bin/` and install the XFCE autostart entry into `~/.config/autostart/`.
-2. Install `/etc/udev/rules.d/65-touchpad-uaccess.rules` (`TAG+="uaccess"` for `ID_INPUT_TOUCHPAD==1`) so the active local user can read touchpad multitouch events immediately **without rebooting or logging out**.
-3. Configure `/etc/X11/xorg.conf.d/40-libinput.conf` and XFCE (`xfwm4` + `pointers`) for tap-to-click, `clickfinger`, natural scrolling, and 4 workspaces.
-4. Start `winpad-gestures` immediately.
+**What `scripts/setup.sh` does:**
+1. Compiles (`-O2 -flto`) & strips `winpad-gestures` and `winpad-taskview` into `~/.local/bin/`, and installs the XFCE autostart entry (`~/.config/autostart/winpad-gestures.desktop`).
+2. Installs `/etc/udev/rules.d/65-touchpad-uaccess.rules` (`TAG+="uaccess"` on `ID_INPUT_TOUCHPAD==1`) and triggers `udevadm` so the active user gets read access immediately **with no reboot or logout**.
+3. Writes clean Precision Touchpad defaults in `/etc/X11/xorg.conf.d/40-libinput.conf` and applies XFCE defaults (tap-to-click, `clickfinger`, natural scrolling, 4 workspaces, disables `mousewheel_rollup`).
+4. Auto-detects your touchpad (reads `ABS_MT_POSITION_X/Y` physical mm resolution) and launches `winpad-gestures` right away.
 
-## Manual Build
+---
 
-```bash
-make install
-```
+## ⚙️ Configuration
 
-Check touchpad detection:
-```bash
-~/.local/bin/winpad-gestures --check
-```
-
-## Configuration
+<details>
+<summary><strong>Customize thresholds, directions, or Task View command</strong></summary>
 
 Edit `~/.config/winpad-gestures.conf` and reload live without restarting:
 
@@ -69,24 +122,55 @@ Edit `~/.config/winpad-gestures.conf` and reload live without restarting:
 killall -HUP winpad-gestures
 ```
 
-Main options in `~/.config/winpad-gestures.conf`:
-- `two_finger_swipe = natural | arrow | off`
-- `three_finger_horiz = alt_tab_scrub | alt_tab_once | off`
-- `four_finger_horiz = workspace_natural | workspace_direct | alt_tab | off`
-- `taskview_cmd = ~/.local/bin/winpad-taskview` (can be swapped for `xfdashboard` or `rofi -show window`)
+```ini
+# Device ("auto" scans /dev/input/event* for any multitouch touchpad)
+device = auto
 
-## Troubleshooting
+# 2-finger horizontal flick: natural (right=Back, left=Forward) | arrow | off
+two_finger_swipe = natural
+two_finger_swipe_min_mm = 16
+two_finger_swipe_max_ms = 380
 
-- **Permission denied on `/dev/input/event*`:** Re-run `./scripts/setup.sh` (or verify `getfacl /dev/input/event*` shows your username).
-- **Check live event/jump logs:**
+# 3-finger horizontal swipe: alt_tab_scrub | alt_tab_once | off
+three_finger_horiz = alt_tab_scrub
+three_finger_thresh_mm = 8.5
+three_finger_step_mm = 14.0
+three_finger_v_thresh_mm = 9.5
+
+# 4-finger horizontal swipe: workspace_natural | workspace_direct | alt_tab | off
+four_finger_horiz = workspace_natural
+four_finger_thresh_mm = 10.0
+
+# 3/4-finger Swipe Up command (can also swap for xfdashboard or rofi -show window)
+taskview_cmd = ~/.local/bin/winpad-taskview
+```
+
+</details>
+
+<details>
+<summary><strong>Troubleshooting & Diagnostics</strong></summary>
+
+- **Verify touchpad detection & permissions:**
+  ```bash
+  ~/.local/bin/winpad-gestures --check
+  ```
+- **Run with live debug output:**
   ```bash
   pkill -x winpad-gestures && ~/.local/bin/winpad-gestures --debug
   ```
-- **Older X11 apps dropping first scroll tick after reversing direction (`xserver-xorg-input-libinput 1.2.x`):**
+- **Ensure legacy `synaptics` Xorg driver isn't installed** (it conflicts with `libinput`):
+  ```bash
+  sudo apt remove xserver-xorg-input-synaptics
+  ```
+- **Older X11 apps dropping first scroll tick on direction reversal (`xserver-xorg-input-libinput 1.2.x`):**
   ```bash
   xinput set-prop "<Your Touchpad Name>" "libinput High Resolution Wheel Scroll Enabled" 0
   ```
 
-## License
+</details>
 
-MIT — see [LICENSE](LICENSE).
+---
+
+## 📄 License
+
+MIT License — see [LICENSE](LICENSE).

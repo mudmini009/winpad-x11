@@ -28,7 +28,11 @@ else
         run_as_user "gcc -O2 -flto -Wall -Wextra '$TARGET_HOME/.local/src/winpad-gestures.c' -o '$TARGET_HOME/.local/bin/winpad-gestures' -lX11 -lXtst -lm && strip --strip-unneeded '$TARGET_HOME/.local/bin/winpad-gestures'"
     fi
     if [ ! -x "$TARGET_HOME/.local/bin/winpad-taskview" ] && [ -f "$TARGET_HOME/.local/src/winpad-taskview.c" ]; then
-        run_as_user "gcc -O2 -flto -Wall -Wextra '$TARGET_HOME/.local/src/winpad-taskview.c' -o '$TARGET_HOME/.local/bin/winpad-taskview' \$(pkg-config --cflags --libs gtk+-3.0 libwnck-3.0) && strip --strip-unneeded '$TARGET_HOME/.local/bin/winpad-taskview'"
+        if pkg-config --exists xcomposite 2>/dev/null; then
+            run_as_user "gcc -O2 -flto -Wall -Wextra -DHAVE_XCOMPOSITE '$TARGET_HOME/.local/src/winpad-taskview.c' -o '$TARGET_HOME/.local/bin/winpad-taskview' \$(pkg-config --cflags --libs gtk+-3.0 libwnck-3.0 xcomposite x11) -lm && strip --strip-unneeded '$TARGET_HOME/.local/bin/winpad-taskview'"
+        else
+            run_as_user "gcc -O2 -flto -Wall -Wextra '$TARGET_HOME/.local/src/winpad-taskview.c' -o '$TARGET_HOME/.local/bin/winpad-taskview' \$(pkg-config --cflags --libs gtk+-3.0 libwnck-3.0) -lm && strip --strip-unneeded '$TARGET_HOME/.local/bin/winpad-taskview'"
+        fi
     fi
 fi
 
