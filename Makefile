@@ -17,7 +17,7 @@ else
   TV_LIBS   := $(shell pkg-config --libs gtk+-3.0 libwnck-3.0) -lm
 endif
 
-.PHONY: all build install strip clean
+.PHONY: all build install uninstall strip clean
 
 all: build
 
@@ -41,6 +41,10 @@ install: strip
 	@if [ ! -f "$(CONFDIR)/winpad-gestures.conf" ]; then \
 		install -m 0644 config/winpad-gestures.conf "$(CONFDIR)/winpad-gestures.conf"; \
 	fi
+
+uninstall:
+	rm -f "$(BINDIR)/winpad-gestures" "$(BINDIR)/winpad-taskview"
+	rm -f "$(CONFDIR)/autostart/winpad-gestures.desktop"
 
 clean:
 	rm -f winpad-gestures winpad-taskview

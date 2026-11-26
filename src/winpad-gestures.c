@@ -28,15 +28,15 @@
 #include <X11/keysym.h>
 #include <X11/XF86keysym.h>
 
-#define WINPAD_VERSION "1.3.0"
+#define WINPAD_VERSION "1.3.1"
 #define MAX_SLOTS 16
 #define ALT_WATCHDOG_MS 15000L
-#define THREE_F_SETTLE_MS 20L
+#define THREE_F_SETTLE_MS 22L
 #define LANDING_MERGE_MS 55L
 #define DROP_HYSTERESIS_MS 45L
 #define OSD_DURATION_MS 820L
 #define OSD_FADE_MS 140L
-#define OSD_W 316
+#define OSD_W 320
 #define OSD_H 84
 #define BITS_PER_LONG (8 * sizeof(unsigned long))
 #define NBITS(x) ((((x) - 1) / BITS_PER_LONG) + 1)
@@ -100,6 +100,8 @@ static long g_alt_held_since = 0;
 static Window g_osd_win = None;
 static Colormap g_osd_cmap = None;
 static Visual *g_osd_visual = NULL;
+static cairo_surface_t *g_osd_xsurf = NULL;
+static cairo_surface_t *g_osd_back = NULL;
 static int g_osd_argb = 0;
 static int g_osd_visible = 0;
 static long g_osd_shown_at = 0;
@@ -164,6 +166,14 @@ static void release_alt_if_held(void) {
 
 static void cleanup_all(void) {
     release_alt_if_held();
+    if (g_osd_back) {
+        cairo_surface_destroy(g_osd_back);
+        g_osd_back = NULL;
+    }
+    if (g_osd_xsurf) {
+        cairo_surface_destroy(g_osd_xsurf);
+        g_osd_xsurf = NULL;
+    }
     if (g_dpy) {
         if (g_osd_win != None) XDestroyWindow(g_dpy, g_osd_win);
         if (g_osd_cmap != None) XFreeColormap(g_dpy, g_osd_cmap);
@@ -435,6 +445,9 @@ static void init_osd_window(void) {
     if (g_osd_win != None) {
         XChangeProperty(g_dpy, g_osd_win, g_atom_wm_type, XA_ATOM, 32,
                         PropModeReplace, (unsigned char *)&g_atom_wm_type_notif, 1);
+        g_osd_xsurf = cairo_xlib_surface_create(g_dpy, g_osd_win, g_osd_visual, OSD_W, OSD_H);
+        g_osd_back = cairo_image_surface_create(g_osd_argb ? CAIRO_FORMAT_ARGB32 : CAIRO_FORMAT_RGB24,
+                                                OSD_W, OSD_H);
     }
 }
 
@@ -497,12 +510,17 @@ static void rounded_rect(cairo_t *cr, double x, double y, double w, double h, do
 }
 
 static void render_osd_frame(long tnow) {
-    if (g_osd_win == None || !g_dpy || !g_osd_visible) return;
+    if (g_osd_win == None || !g_dpy || !g_osd_visible || !g_osd_xsurf || !g_osd_back) return;
+
+    int tiles = (int)(g_osd_total > 8 ? 8 : (g_osd_total < 1 ? 1 : g_osd_total));
+    long clamped_target = g_osd_target_idx;
+    if (clamped_target >= tiles) clamped_target = tiles - 1;
+    if (clamped_target < 0) clamped_target = 0;
 
     /* Smooth glide towards target index + fade-in / fade-out */
-    g_osd_anim_pos += ((double)g_osd_target_idx - g_osd_anim_pos) * 0.42;
-    if (fabs((double)g_osd_target_idx - g_osd_anim_pos) < 0.015)
-        g_osd_anim_pos = (double)g_osd_target_idx;
+    g_osd_anim_pos += ((double)clamped_target - g_osd_anim_pos) * 0.42;
+    if (fabs((double)clamped_target - g_osd_anim_pos) < 0.015)
+        g_osd_anim_pos = (double)clamped_target;
 
     double alpha = 1.0;
     if (g_osd_argb) {
@@ -514,8 +532,8 @@ static void render_osd_frame(long tnow) {
         if (alpha > 1.0) alpha = 1.0;
     }
 
-    cairo_surface_t *surf = cairo_xlib_surface_create(g_dpy, g_osd_win, g_osd_visual, OSD_W, OSD_H);
-    cairo_t *cr = cairo_create(surf);
+    /* Double-buffered offscreen draw -> single zero-flicker blit */
+    cairo_t *cr = cairo_create(g_osd_back);
 
     if (g_osd_argb) {
         cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
@@ -533,7 +551,6 @@ static void render_osd_frame(long tnow) {
     cairo_fill_preserve(cr);
     cairo_pattern_destroy(bg);
 
-    /* Outer border glow */
     cairo_pattern_t *brd = cairo_pattern_create_linear(0, 0, OSD_W, 0);
     cairo_pattern_add_color_stop_rgba(brd, 0.0, 0.49, 0.81, 1.0, 0.50 * alpha);
     cairo_pattern_add_color_stop_rgba(brd, 0.5, 0.48, 0.64, 0.97, 0.58 * alpha);
@@ -543,7 +560,6 @@ static void render_osd_frame(long tnow) {
     cairo_stroke(cr);
     cairo_pattern_destroy(brd);
 
-    /* Header line: "Desktop X" + "of N" */
     char title[32], sub[16];
     snprintf(title, sizeof(title), "Desktop %ld", g_osd_target_idx + 1);
     snprintf(sub, sizeof(sub), "/ %ld", g_osd_total);
@@ -568,9 +584,12 @@ static void render_osd_frame(long tnow) {
     cairo_move_to(cr, hx + te.x_advance + 6.0, 26.0);
     cairo_show_text(cr, sub);
 
-    /* Mini desktop screen tiles + sliding glowing selector */
-    int tiles = (int)(g_osd_total > 6 ? 6 : g_osd_total);
-    double tile_w = 54.0, tile_h = 28.0, gap = 10.0;
+    /* Auto-fit tile width up to 8 desktops so indicator never overflows OSD_W */
+    double gap = tiles > 5 ? 6.0 : 10.0;
+    double max_row = OSD_W - 36.0;
+    double tile_w = (max_row - (tiles - 1) * gap) / (double)tiles;
+    if (tile_w > 54.0) tile_w = 54.0;
+    double tile_h = 28.0;
     double row_w = tiles * tile_w + (tiles - 1) * gap;
     double sx = (OSD_W - row_w) * 0.5;
     double sy = 39.0;
@@ -578,7 +597,7 @@ static void render_osd_frame(long tnow) {
     for (int i = 0; i < tiles; i++) {
         double tx = sx + i * (tile_w + gap);
         rounded_rect(cr, tx, sy, tile_w, tile_h, 7.0);
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (i == g_osd_target_idx ? 0.14 : 0.06) * alpha);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (i == clamped_target ? 0.14 : 0.06) * alpha);
         cairo_fill_preserve(cr);
         cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.10 * alpha);
         cairo_set_line_width(cr, 1.0);
@@ -590,13 +609,12 @@ static void render_osd_frame(long tnow) {
         cairo_set_font_size(cr, 11.5);
         cairo_text_extents_t ne;
         cairo_text_extents(cr, nbuf, &ne);
-        cairo_set_source_rgba(cr, 0.85, 0.90, 1.0, (i == g_osd_target_idx ? 0.98 : 0.45) * alpha);
+        cairo_set_source_rgba(cr, 0.85, 0.90, 1.0, (i == clamped_target ? 0.98 : 0.45) * alpha);
         cairo_move_to(cr, tx + (tile_w - ne.width) * 0.5 - ne.x_bearing,
                       sy + (tile_h + ne.height) * 0.5);
         cairo_show_text(cr, nbuf);
     }
 
-    /* Smooth sliding glowing frame over active tile */
     double sel_x = sx + g_osd_anim_pos * (tile_w + gap);
     rounded_rect(cr, sel_x, sy, tile_w, tile_h, 7.0);
     cairo_pattern_t *sel_fill = cairo_pattern_create_linear(sel_x, sy, sel_x + tile_w, sy + tile_h);
@@ -615,7 +633,12 @@ static void render_osd_frame(long tnow) {
     cairo_pattern_destroy(sel_brd);
 
     cairo_destroy(cr);
-    cairo_surface_destroy(surf);
+
+    cairo_t *xcr = cairo_create(g_osd_xsurf);
+    cairo_set_operator(xcr, CAIRO_OPERATOR_SOURCE);
+    cairo_set_source_surface(xcr, g_osd_back, 0.0, 0.0);
+    cairo_paint(xcr);
+    cairo_destroy(xcr);
     XFlush(g_dpy);
 }
 
@@ -858,11 +881,14 @@ static void trigger_back_forward(int is_back) {
 
     if (strstr(cls, "terminal") || strstr(cls, "alacritty") || strstr(cls, "kitty") ||
         strstr(cls, "wezterm") || strstr(cls, "konsole") || strstr(cls, "xterm") ||
-        strstr(cls, "urxvt") || strstr(cls, "tilix")) {
+        strstr(cls, "urxvt") || strstr(cls, "tilix") || strstr(cls, "terminator") ||
+        strstr(cls, "guake") || strstr(cls, "tilda")) {
         return;
     }
 
-    if (strstr(cls, "code") || strstr(cls, "obsidian") || strstr(cls, "jetbrains")) {
+    if (strstr(cls, "code") || strstr(cls, "codium") || strstr(cls, "obsidian") ||
+        strstr(cls, "jetbrains") || strstr(cls, "antigravity") || strstr(cls, "cursor") ||
+        strstr(cls, "zed") || strstr(cls, "sublime")) {
         send_key_combo(g_kc_alt, is_back ? g_kc_left : g_kc_right);
         return;
     }

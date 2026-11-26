@@ -376,7 +376,7 @@ static void refresh_view_state(void) {
 
     if (g_empty_lbl && g_scroll) {
         if (visible == 0) {
-            char ebuf[128];
+            char ebuf[192];
             if (g_filter[0])
                 snprintf(ebuf, sizeof(ebuf), "No windows match \"%s\"", g_filter);
             else
@@ -658,11 +658,19 @@ int main(int argc, char **argv) {
     int px = 0, py = 0;
     gdk_device_get_position(ptr, NULL, &px, &py);
     GdkMonitor *mon = gdk_display_get_monitor_at_point(gdpy, px, py);
+    int mon_idx = 0;
+    int n_mon = gdk_display_get_n_monitors(gdpy);
+    for (int i = 0; i < n_mon; i++) {
+        if (gdk_display_get_monitor(gdpy, i) == mon) {
+            mon_idx = i;
+            break;
+        }
+    }
     GdkRectangle geom;
     gdk_monitor_get_geometry(mon, &geom);
     gtk_window_move(GTK_WINDOW(g_window), geom.x, geom.y);
     gtk_window_set_default_size(GTK_WINDOW(g_window), geom.width, geom.height);
-    gtk_window_fullscreen(GTK_WINDOW(g_window));
+    gtk_window_fullscreen_on_monitor(GTK_WINDOW(g_window), gscr, mon_idx);
     gtk_widget_set_opacity(g_window, 0.15);
 
     g_signal_connect(g_window, "draw", G_CALLBACK(on_draw_bg), NULL);

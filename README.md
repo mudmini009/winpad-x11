@@ -6,7 +6,7 @@
 
 [![Language](https://img.shields.io/badge/language-C11-555555?style=for-the-badge&logo=c&logoColor=white)](src/)
 [![Platform](https://img.shields.io/badge/X11-XFCE%20%7C%20EWMH-7aa2f7?style=for-the-badge&logo=linux&logoColor=white)](#requirements)
-[![Footprint](https://img.shields.io/badge/daemon%20RAM-~4.4%20MB-9ece6a?style=for-the-badge)](#measured-footprint)
+[![Footprint](https://img.shields.io/badge/daemon%20RAM-~5%20MB-9ece6a?style=for-the-badge)](#measured-footprint)
 [![Idle CPU](https://img.shields.io/badge/idle%20CPU-0.0%25-7dcfff?style=for-the-badge)](#measured-footprint)
 [![License](https://img.shields.io/badge/license-MIT-bb9af7?style=for-the-badge)](LICENSE)
 
@@ -81,7 +81,7 @@ Observed on Ubuntu 22.04 / Xubuntu (`x86_64`, compiled with `gcc -O2 -flto` and 
 
 | Component | Binary Size | Memory (RSS) | Idle CPU |
 |---|---:|---:|---:|
-| `winpad-gestures` (background daemon) | **43 KB** | **~4.4 MB (`4520 KB`)** | **0.0%** (`poll()`) |
+| `winpad-gestures` (background daemon) | **43 KB** | **~4.9 MB (`5052 KB`)** | **0.0%** (`poll()`) |
 | `winpad-taskview` (on-demand Task View) | **47 KB** | **0 MB idle** (exits on close) | **0.0%** |
 
 ---
@@ -110,6 +110,11 @@ cd winpad-x11
 2. Installs `/etc/udev/rules.d/65-touchpad-uaccess.rules` (`TAG+="uaccess"` on `ID_INPUT_TOUCHPAD==1`) and triggers `udevadm` so the active user gets read access immediately **with no reboot or logout**.
 3. Writes clean Precision Touchpad defaults in `/etc/X11/xorg.conf.d/40-libinput.conf` and applies XFCE defaults (tap-to-click, `clickfinger`, natural scrolling, 4 workspaces, disables `mousewheel_rollup`).
 4. Auto-detects your touchpad (reads `ABS_MT_POSITION_X/Y` physical mm resolution) and launches `winpad-gestures` right away.
+
+To uninstall anytime:
+```bash
+make uninstall
+```
 
 ---
 

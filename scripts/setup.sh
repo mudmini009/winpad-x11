@@ -17,6 +17,15 @@ run_as_user() {
 
 echo "=== winpad-x11 Setup for X11/XFCE (user: $TARGET_USER) ==="
 
+if [ "${XDG_SESSION_TYPE:-x11}" = "wayland" ]; then
+    echo "WARNING: Wayland session detected. winpad-x11 is designed for X11 sessions (e.g. Xubuntu/XFCE)."
+fi
+
+if dpkg -l xserver-xorg-input-synaptics 2>/dev/null | grep -q '^ii'; then
+    echo "WARNING: xserver-xorg-input-synaptics is installed and can conflict with libinput."
+    echo "         Recommended: sudo apt remove xserver-xorg-input-synaptics"
+fi
+
 # 1. Build & install binaries/configs if running from the repository
 if [ -f "$REPO_ROOT/Makefile" ] && [ -f "$REPO_ROOT/src/winpad-gestures.c" ]; then
     echo "[1/5] Building and installing winpad-gestures & winpad-taskview..."
@@ -49,6 +58,9 @@ sudo udevadm settle --timeout=5 || true
 # 3. Configure generic libinput Precision Touchpad Xorg defaults
 XORG_CONF="/etc/X11/xorg.conf.d/40-libinput.conf"
 echo "[3/5] Updating $XORG_CONF with generic libinput Precision Touchpad defaults"
+if [ -f "$XORG_CONF" ] && ! grep -q "Windows-Style Precision Touchpad" "$XORG_CONF" 2>/dev/null; then
+    sudo cp "$XORG_CONF" "${XORG_CONF}.bak.$(date +%Y%m%d%H%M%S)"
+fi
 sudo tee "$XORG_CONF" >/dev/null <<'EOF'
 Section "InputClass"
     Identifier "Windows-Style Precision Touchpad"
@@ -78,9 +90,10 @@ if command -v xfconf-query >/dev/null 2>&1; then
         xfconf-query -c pointers -p "$ch/ReverseScrolling" -n -t bool -s true 2>/dev/null || true
         xfconf-query -c pointers -p "$ch/Properties/libinput_Tapping_Enabled" -n -t int -s 1 2>/dev/null || true
         xfconf-query -c pointers -p "$ch/Properties/libinput_Click_Method_Enabled" -n -t int -s 0 -t int -s 1 2>/dev/null || true
-    done
-    for ch in $(xfconf-query -c pointers -l | sed -n "s|^\(/ASUP[^/]*_Mouse\)/.*|\1|p" | sort -u); do
-        xfconf-query -c pointers -p "$ch/ReverseScrolling" -n -t bool -s true 2>/dev/null || true
+        mouse_ch="${ch%_Touchpad}_Mouse"
+        if xfconf-query -c pointers -l | grep -q "^${mouse_ch}/"; then
+            xfconf-query -c pointers -p "$mouse_ch/ReverseScrolling" -n -t bool -s true 2>/dev/null || true
+        fi
     done
 fi
 '
