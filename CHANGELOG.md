@@ -12,7 +12,7 @@ All notable changes to `winpad-x11` are documented in this file.
 - **Upgraded Task View (`winpad-taskview`) visuals & speed:**
   - Added `on_draw_card()` with a lightweight 3-ring cyan-to-violet outer aura, radial spotlight, luminous gradient border, top specular edge, and top accent pill bar on the selected window card.
   - Added an `Active` pill badge on the previously focused window, frosted pill badges on minimized/off-workspace icon cards, header accent bar + live search hint chip, and theme-independent `6x6` Cairo indicator dots on the bottom Virtual Desktops dock.
-  - Added cached ambient backdrop rendering (`g_bg_cache`), skipped redundant `XComposite` round-trips for minimized/off-workspace windows at startup, added lazy `XComposite` thumbnail capture on desktop switches while Task View is open, and fixed middle-click card removal.
+  - Added cached ambient backdrop rendering (`g_bg_cache`), skipped redundant `XComposite` round-trips for minimized/off-workspace windows at startup, added lazy `XComposite` thumbnail capture on desktop switches while Task View is open, added `libwnck 43+` (`WnckHandle`) compatibility alongside `libwnck < 43`, and fixed middle-click card removal.
 - **Daemon & OSD polish:** Added 15 ms frame-rate throttling + time-compensated glide on the Fluent OSD, `4 -> 3` finger liftoff anti-misfire lock (`four_f_locked`), `SYN_DROPPED` recovery, and clean default signal restoration in forked children.
 
 ## [1.3.1] - 2026-11-26

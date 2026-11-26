@@ -56,6 +56,9 @@ static int g_show_all = 0;
 static double g_fade_alpha = 0.0;
 static char g_filter[128] = {0};
 static WnckScreen *g_screen = NULL;
+#if defined(WNCK_CHECK_VERSION) && WNCK_CHECK_VERSION(43, 0, 0)
+static WnckHandle *g_wnck_handle = NULL;
+#endif
 static volatile sig_atomic_t g_refresh_ws = 0;
 
 static void remove_pid_file(void) {
@@ -1026,7 +1029,13 @@ int main(int argc, char **argv) {
     gtk_init(&argc, &argv);
     apply_css();
 
+#if defined(WNCK_CHECK_VERSION) && WNCK_CHECK_VERSION(43, 0, 0)
+    g_wnck_handle = wnck_handle_new(WNCK_CLIENT_TYPE_PAGER);
+    g_screen = wnck_handle_get_default_screen(g_wnck_handle);
+#else
+    wnck_set_client_type(WNCK_CLIENT_TYPE_PAGER);
     g_screen = wnck_screen_get_default();
+#endif
     wnck_screen_force_update(g_screen);
     WnckWindow *active_win = wnck_screen_get_active_window(g_screen);
     WnckWorkspace *active_ws = wnck_screen_get_active_workspace(g_screen);
@@ -1367,5 +1376,11 @@ int main(int argc, char **argv) {
     g_free(g_ws_btns);
     g_hash_table_destroy(g_thumbs);
     g_thumbs = NULL;
+#if defined(WNCK_CHECK_VERSION) && WNCK_CHECK_VERSION(43, 0, 0)
+    if (g_wnck_handle) {
+        g_object_unref(g_wnck_handle);
+        g_wnck_handle = NULL;
+    }
+#endif
     return 0;
 }
