@@ -6,7 +6,7 @@
 
 [![Language](https://img.shields.io/badge/language-C11-555555?style=for-the-badge&logo=c&logoColor=white)](src/)
 [![Platform](https://img.shields.io/badge/X11-XFCE%20%7C%20EWMH-7aa2f7?style=for-the-badge&logo=linux&logoColor=white)](#requirements)
-[![Footprint](https://img.shields.io/badge/daemon%20RAM-~3%20MB-9ece6a?style=for-the-badge)](#measured-footprint)
+[![Footprint](https://img.shields.io/badge/daemon%20RAM-~4.4%20MB-9ece6a?style=for-the-badge)](#measured-footprint)
 [![Idle CPU](https://img.shields.io/badge/idle%20CPU-0.0%25-7dcfff?style=for-the-badge)](#measured-footprint)
 [![License](https://img.shields.io/badge/license-MIT-bb9af7?style=for-the-badge)](LICENSE)
 
@@ -57,7 +57,7 @@ Unlike simple toggle scripts, 3-finger & 4-finger vertical swipes follow the exa
 
 ### Smart Responsiveness & Anti-Misfire Guards
 - **32 ms 3-vs-4 finger settle + 45 ms bounce hysteresis:** Ensures rapid 4-finger swipes never misfire as 3-finger gestures during finger landing, and staggered finger liftoff never drops `Alt+Tab` mid-gesture.
-- **Task View aware navigation:** When Task View is open, 3-finger Left/Right selects windows inside Task View, 4-finger Left/Right switches desktops live, and 4-finger switches from normal view display a lightweight pure-X11 Desktop OSD pill.
+- **Task View aware navigation & Primary-monitor Fluent OSD:** When Task View is open, 3-finger Left/Right selects windows inside Task View and 4-finger Left/Right switches desktops live. Outside Task View, 4-finger desktop switching renders a translucent 32-bit ARGB Fluent pill on your **primary monitor** via XRandR (never split across dual-monitor gaps).
 - **Terminal-safe 2-finger Back/Forward:** Checks active window `WM_CLASS` via X11—sends `XF86Back`/`XF86Forward` to browsers & file managers, `Alt+Left`/`Alt+Right` to IDEs, and stays silent in terminals.
 - **Scroll lock protection:** Vertical 2-finger scrolling locks out horizontal Back/Forward flicks (`> 5.5 mm` vertical motion), preventing accidental navigation while scrolling.
 - **XKB layout protection:** Saves and restores active XKB group via `XkbLockGroup` so `Alt+Shift+Tab` never accidentally flips multi-language layouts (e.g. `grp:alt_shift_toggle`).
@@ -80,7 +80,7 @@ Observed on Ubuntu 22.04 / Xubuntu (`x86_64`, compiled with `gcc -O2 -flto` and 
 
 | Component | Binary Size | Memory (RSS) | Idle CPU |
 |---|---:|---:|---:|
-| `winpad-gestures` (background daemon) | **35 KB** | **~3.0 MB (`3072 KB`)** | **0.0%** (`poll()`) |
+| `winpad-gestures` (background daemon) | **43 KB** | **~4.4 MB (`4520 KB`)** | **0.0%** (`poll()`) |
 | `winpad-taskview` (on-demand Task View) | **47 KB** | **0 MB idle** (exits on close) | **0.0%** |
 
 ---
@@ -90,7 +90,7 @@ Observed on Ubuntu 22.04 / Xubuntu (`x86_64`, compiled with `gcc -O2 -flto` and 
 - Linux **X11** desktop session (`xfwm4`, Openbox, i3, MATE, etc. — EWMH compatible) using **`libinput`** (`xserver-xorg-input-libinput`)
 - Build dependencies (only needed once during compilation):
   ```bash
-  sudo apt update && sudo apt install -y gcc pkg-config libx11-dev libxtst-dev libgtk-3-dev libwnck-3-dev libxcomposite-dev
+  sudo apt update && sudo apt install -y gcc pkg-config libx11-dev libxtst-dev libxrandr-dev libxrender-dev libcairo2-dev libgtk-3-dev libwnck-3-dev libxcomposite-dev
   ```
   *(Note: `libxcomposite-dev` enables live window thumbnails; `Makefile` automatically falls back to icon-card mode if `xcomposite` is absent.)*
 
@@ -134,12 +134,13 @@ two_finger_swipe_max_ms = 380
 
 # 3-finger horizontal swipe: alt_tab_scrub | alt_tab_once | off
 three_finger_horiz = alt_tab_scrub
+three_finger_direction = direct
 three_finger_thresh_mm = 8.5
 three_finger_step_mm = 14.0
 three_finger_v_thresh_mm = 9.5
 
-# 4-finger horizontal swipe: workspace_natural | workspace_direct | alt_tab | off
-four_finger_horiz = workspace_natural
+# 4-finger horizontal swipe: workspace_direct (Windows 11 default) | workspace_natural | alt_tab | off
+four_finger_horiz = workspace_direct
 four_finger_thresh_mm = 10.0
 
 # 3/4-finger Swipe Up command (can also swap for xfdashboard or rofi -show window)

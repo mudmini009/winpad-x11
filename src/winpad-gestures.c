@@ -16,20 +16,26 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <cairo/cairo.h>
+#include <cairo/cairo-xlib.h>
 #include <X11/Xatom.h>
 #include <X11/XKBlib.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/XTest.h>
+#include <X11/extensions/Xrandr.h>
+#include <X11/extensions/Xrender.h>
 #include <X11/keysym.h>
 #include <X11/XF86keysym.h>
 
-#define WINPAD_VERSION "1.1.0"
+#define WINPAD_VERSION "1.2.0"
 #define MAX_SLOTS 16
 #define ALT_WATCHDOG_MS 15000L
 #define THREE_F_SETTLE_MS 32L
 #define DROP_HYSTERESIS_MS 45L
-#define OSD_DURATION_MS 650L
+#define OSD_DURATION_MS 750L
+#define OSD_W 268
+#define OSD_H 74
 #define BITS_PER_LONG (8 * sizeof(unsigned long))
 #define NBITS(x) ((((x) - 1) / BITS_PER_LONG) + 1)
 #define TEST_BIT(bit, arr) (((arr)[(bit) / BITS_PER_LONG] >> ((bit) % BITS_PER_LONG)) & 1UL)
@@ -48,8 +54,8 @@ typedef enum {
 
 typedef enum {
     FOUR_H_OFF = 0,
-    FOUR_H_WORKSPACE_NATURAL = 1, /* swipe left -> next desktop, swipe right -> prev desktop */
-    FOUR_H_WORKSPACE_DIRECT = 2,  /* swipe right -> next desktop, swipe left -> prev desktop */
+    FOUR_H_WORKSPACE_DIRECT = 1,  /* Windows default: swipe right -> next desktop, swipe left -> prev */
+    FOUR_H_WORKSPACE_NATURAL = 2, /* swipe left -> next desktop, swipe right -> prev */
     FOUR_H_ALTTAB = 3
 } FourHorizMode;
 
@@ -60,6 +66,7 @@ typedef struct {
     double two_f_min_mm;
     long two_f_max_ms;
     ThreeHorizMode three_h_mode;
+    int three_h_invert; /* 0 = direct (right=next/Tab, left=prev/Shift+Tab), 1 = natural */
     double three_h_thresh_mm;
     double three_h_step_mm;
     double three_v_thresh_mm;
@@ -87,7 +94,9 @@ static int g_alt_held = 0;
 static long g_alt_held_since = 0;
 
 static Window g_osd_win = None;
-static GC g_osd_gc = None;
+static Colormap g_osd_cmap = None;
+static Visual *g_osd_visual = NULL;
+static int g_osd_argb = 0;
 static long g_osd_hide_at = 0;
 
 static KeyCode g_kc_alt = 0;
@@ -146,8 +155,8 @@ static void release_alt_if_held(void) {
 static void cleanup_all(void) {
     release_alt_if_held();
     if (g_dpy) {
-        if (g_osd_gc) XFreeGC(g_dpy, g_osd_gc);
         if (g_osd_win != None) XDestroyWindow(g_dpy, g_osd_win);
+        if (g_osd_cmap != None) XFreeColormap(g_dpy, g_osd_cmap);
         XCloseDisplay(g_dpy);
         g_dpy = NULL;
     }
@@ -181,10 +190,11 @@ static void load_config(void) {
     g_cfg.two_f_min_mm = 16.0;
     g_cfg.two_f_max_ms = 380;
     g_cfg.three_h_mode = THREE_H_SCRUB;
+    g_cfg.three_h_invert = 0;
     g_cfg.three_h_thresh_mm = 8.5;
     g_cfg.three_h_step_mm = 14.0;
     g_cfg.three_v_thresh_mm = 9.5;
-    g_cfg.four_h_mode = FOUR_H_WORKSPACE_NATURAL;
+    g_cfg.four_h_mode = FOUR_H_WORKSPACE_DIRECT;
     g_cfg.four_h_thresh_mm = 10.0;
     g_cfg.four_v_thresh_mm = 10.0;
 
@@ -225,6 +235,8 @@ static void load_config(void) {
             if (strcmp(v, "off") == 0) g_cfg.three_h_mode = THREE_H_OFF;
             else if (strcmp(v, "alt_tab_once") == 0) g_cfg.three_h_mode = THREE_H_ONCE;
             else g_cfg.three_h_mode = THREE_H_SCRUB;
+        } else if (strcmp(k, "three_finger_direction") == 0) {
+            g_cfg.three_h_invert = (strcmp(v, "natural") == 0) ? 1 : 0;
         } else if (strcmp(k, "three_finger_thresh_mm") == 0) {
             double val = atof(v);
             if (val >= 4.0 && val <= 80.0) g_cfg.three_h_thresh_mm = val;
@@ -236,9 +248,9 @@ static void load_config(void) {
             if (val >= 6.0 && val <= 80.0) g_cfg.three_h_step_mm = val;
         } else if (strcmp(k, "four_finger_horiz") == 0) {
             if (strcmp(v, "off") == 0) g_cfg.four_h_mode = FOUR_H_OFF;
-            else if (strcmp(v, "workspace_direct") == 0) g_cfg.four_h_mode = FOUR_H_WORKSPACE_DIRECT;
+            else if (strcmp(v, "workspace_natural") == 0) g_cfg.four_h_mode = FOUR_H_WORKSPACE_NATURAL;
             else if (strcmp(v, "alt_tab") == 0) g_cfg.four_h_mode = FOUR_H_ALTTAB;
-            else g_cfg.four_h_mode = FOUR_H_WORKSPACE_NATURAL;
+            else g_cfg.four_h_mode = FOUR_H_WORKSPACE_DIRECT;
         } else if (strcmp(k, "four_finger_thresh_mm") == 0) {
             double val = atof(v);
             if (val >= 4.0 && val <= 80.0) {
@@ -369,6 +381,50 @@ static int find_and_open_touchpad(char *out_path, size_t pathsz,
     return best_fd;
 }
 
+static void init_osd_window(void) {
+    int scr = DefaultScreen(g_dpy);
+    XVisualInfo vinfo;
+    if (XMatchVisualInfo(g_dpy, scr, 32, TrueColor, &vinfo)) {
+        XRenderPictFormat *fmt = XRenderFindVisualFormat(g_dpy, vinfo.visual);
+        if (fmt && fmt->direct.alphaMask) {
+            g_osd_visual = vinfo.visual;
+            g_osd_cmap = XCreateColormap(g_dpy, g_root, vinfo.visual, AllocNone);
+            XSetWindowAttributes swa;
+            memset(&swa, 0, sizeof(swa));
+            swa.override_redirect = True;
+            swa.colormap = g_osd_cmap;
+            swa.background_pixel = 0;
+            swa.border_pixel = 0;
+            swa.save_under = True;
+            g_osd_win = XCreateWindow(g_dpy, g_root, 0, 0, OSD_W, OSD_H, 0,
+                                      32, InputOutput, vinfo.visual,
+                                      CWOverrideRedirect | CWColormap | CWBackPixel |
+                                      CWBorderPixel | CWSaveUnder, &swa);
+            if (g_osd_win != None)
+                g_osd_argb = 1;
+        }
+    }
+
+    if (g_osd_win == None) {
+        g_osd_visual = DefaultVisual(g_dpy, scr);
+        XSetWindowAttributes swa;
+        memset(&swa, 0, sizeof(swa));
+        swa.override_redirect = True;
+        swa.background_pixel = 0x141824;
+        swa.border_pixel = 0x7aa2f7;
+        swa.save_under = True;
+        g_osd_win = XCreateWindow(g_dpy, g_root, 0, 0, OSD_W, OSD_H, 1,
+                                  CopyFromParent, InputOutput, CopyFromParent,
+                                  CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWSaveUnder,
+                                  &swa);
+    }
+
+    if (g_osd_win != None) {
+        XChangeProperty(g_dpy, g_osd_win, g_atom_wm_type, XA_ATOM, 32,
+                        PropModeReplace, (unsigned char *)&g_atom_wm_type_notif, 1);
+    }
+}
+
 static void init_x11_state(void) {
     g_root = DefaultRootWindow(g_dpy);
 
@@ -389,52 +445,143 @@ static void init_x11_state(void) {
     g_atom_wm_type         = XInternAtom(g_dpy, "_NET_WM_WINDOW_TYPE", False);
     g_atom_wm_type_notif   = XInternAtom(g_dpy, "_NET_WM_WINDOW_TYPE_NOTIFICATION", False);
 
-    XSetWindowAttributes swa;
-    swa.override_redirect = True;
-    swa.background_pixel = 0x161a26;
-    swa.border_pixel = 0x7aa2f7;
-    swa.save_under = True;
-    g_osd_win = XCreateWindow(g_dpy, g_root, 0, 0, 220, 56, 1,
-                              CopyFromParent, InputOutput, CopyFromParent,
-                              CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWSaveUnder,
-                              &swa);
-    if (g_osd_win != None) {
-        XChangeProperty(g_dpy, g_osd_win, g_atom_wm_type, XA_ATOM, 32,
-                        PropModeReplace, (unsigned char *)&g_atom_wm_type_notif, 1);
-        g_osd_gc = XCreateGC(g_dpy, g_osd_win, 0, NULL);
+    init_osd_window();
+}
+
+static void get_primary_monitor_rect(int *ox, int *oy, int *ow, int *oh) {
+    int scr = DefaultScreen(g_dpy);
+    *ox = 0;
+    *oy = 0;
+    *ow = DisplayWidth(g_dpy, scr);
+    *oh = DisplayHeight(g_dpy, scr);
+
+    int nmon = 0;
+    XRRMonitorInfo *mons = XRRGetMonitors(g_dpy, g_root, True, &nmon);
+    if (mons && nmon > 0) {
+        int chosen = 0;
+        for (int i = 0; i < nmon; i++) {
+            if (mons[i].primary) {
+                chosen = i;
+                break;
+            }
+        }
+        *ox = mons[chosen].x;
+        *oy = mons[chosen].y;
+        *ow = mons[chosen].width;
+        *oh = mons[chosen].height;
+        XRRFreeMonitors(mons);
     }
 }
 
-static void show_desktop_osd(long cur_idx, long total) {
-    if (g_osd_win == None || !g_osd_gc || !g_dpy) return;
-    int scr = DefaultScreen(g_dpy);
-    int sw = DisplayWidth(g_dpy, scr);
-    int sh = DisplayHeight(g_dpy, scr);
-    int w = 220, h = 56;
-    int x = (sw - w) / 2;
-    int y = sh - h - 76;
+static void rounded_rect(cairo_t *cr, double x, double y, double w, double h, double r) {
+    const double deg = M_PI / 180.0;
+    cairo_new_sub_path(cr);
+    cairo_arc(cr, x + w - r, y + r, r, -90 * deg, 0 * deg);
+    cairo_arc(cr, x + w - r, y + h - r, r, 0 * deg, 90 * deg);
+    cairo_arc(cr, x + r, y + h - r, r, 90 * deg, 180 * deg);
+    cairo_arc(cr, x + r, y + r, r, 180 * deg, 270 * deg);
+    cairo_close_path(cr);
+}
 
-    XMoveResizeWindow(g_dpy, g_osd_win, x, y, (unsigned int)w, (unsigned int)h);
+static void show_desktop_osd(long cur_idx, long total) {
+    if (g_osd_win == None || !g_dpy) return;
+
+    int mx = 0, my = 0, mw = 1920, mh = 1080;
+    get_primary_monitor_rect(&mx, &my, &mw, &mh);
+    int x = mx + (mw - OSD_W) / 2;
+    int y = my + mh - OSD_H - 72;
+
+    XMoveResizeWindow(g_dpy, g_osd_win, x, y, OSD_W, OSD_H);
     XMapRaised(g_dpy, g_osd_win);
 
-    XSetForeground(g_dpy, g_osd_gc, 0x161a26);
-    XFillRectangle(g_dpy, g_osd_win, g_osd_gc, 0, 0, (unsigned int)w, (unsigned int)h);
+    cairo_surface_t *surf = cairo_xlib_surface_create(g_dpy, g_osd_win, g_osd_visual, OSD_W, OSD_H);
+    cairo_t *cr = cairo_create(surf);
 
-    char txt[32];
-    snprintf(txt, sizeof(txt), "Desktop %ld / %ld", cur_idx + 1, total);
-    XSetForeground(g_dpy, g_osd_gc, 0xf1f5f9);
-    int tx = (w - (int)strlen(txt) * 6) / 2;
-    XDrawString(g_dpy, g_osd_win, g_osd_gc, tx > 8 ? tx : 8, 22, txt, (int)strlen(txt));
-
-    int dots = (int)(total > 8 ? 8 : total);
-    int dot_w = 16, gap = 8;
-    int total_w = dots * dot_w + (dots - 1) * gap;
-    int start_x = (w - total_w) / 2;
-    for (int i = 0; i < dots; i++) {
-        XSetForeground(g_dpy, g_osd_gc, (i == cur_idx) ? 0x7aa2f7 : 0x334155);
-        XFillRectangle(g_dpy, g_osd_win, g_osd_gc, start_x + i * (dot_w + gap), 35,
-                       (unsigned int)dot_w, 6);
+    if (g_osd_argb) {
+        cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.0);
+        cairo_paint(cr);
+        cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
     }
+
+    double radius = g_osd_argb ? 18.0 : 0.0;
+    rounded_rect(cr, 1.0, 1.0, OSD_W - 2.0, OSD_H - 2.0, radius);
+    cairo_pattern_t *bg = cairo_pattern_create_linear(0, 0, OSD_W, OSD_H);
+    cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.085, 0.105, 0.165, 0.93);
+    cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.060, 0.075, 0.125, 0.95);
+    cairo_set_source(cr, bg);
+    cairo_fill_preserve(cr);
+    cairo_pattern_destroy(bg);
+
+    /* Subtle glowing border */
+    cairo_set_source_rgba(cr, 0.478, 0.635, 0.969, 0.52);
+    cairo_set_line_width(cr, 1.4);
+    cairo_stroke(cr);
+
+    /* Top inner sheen */
+    rounded_rect(cr, 2.5, 2.5, OSD_W - 5.0, OSD_H - 5.0, radius > 2.0 ? radius - 1.5 : 0.0);
+    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.07);
+    cairo_set_line_width(cr, 1.0);
+    cairo_stroke(cr);
+
+    /* Mini desktop emblem on left */
+    rounded_rect(cr, 20.0, 15.0, 26.0, 19.0, 4.5);
+    cairo_pattern_t *ico = cairo_pattern_create_linear(20.0, 15.0, 46.0, 34.0);
+    cairo_pattern_add_color_stop_rgb(ico, 0.0, 0.49, 0.81, 1.0);
+    cairo_pattern_add_color_stop_rgb(ico, 1.0, 0.48, 0.64, 0.97);
+    cairo_set_source(cr, ico);
+    cairo_fill(cr);
+    cairo_pattern_destroy(ico);
+
+    rounded_rect(cr, 24.0, 19.0, 18.0, 11.0, 2.0);
+    cairo_set_source_rgba(cr, 0.07, 0.09, 0.14, 0.85);
+    cairo_fill(cr);
+
+    /* Crisp label: "Desktop X" + "of N" */
+    char title[32], sub[16];
+    snprintf(title, sizeof(title), "Desktop %ld", cur_idx + 1);
+    snprintf(sub, sizeof(sub), "of %ld", total);
+
+    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+    cairo_set_font_size(cr, 15.5);
+    cairo_text_extents_t te;
+    cairo_text_extents(cr, title, &te);
+    cairo_set_source_rgb(cr, 0.96, 0.97, 1.0);
+    cairo_move_to(cr, 56.0, 30.0);
+    cairo_show_text(cr, title);
+
+    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+    cairo_set_font_size(cr, 12.5);
+    cairo_set_source_rgba(cr, 0.62, 0.68, 0.80, 0.90);
+    cairo_move_to(cr, 56.0 + te.x_advance + 8.0, 30.0);
+    cairo_show_text(cr, sub);
+
+    /* Sleek capsule indicator bar centered at bottom of pill */
+    int dots = (int)(total > 8 ? 8 : total);
+    double active_w = 30.0, idle_w = 12.0, dot_h = 6.0, gap = 8.0;
+    double bar_w = (dots - 1) * idle_w + active_w + (dots - 1) * gap;
+    double px = (OSD_W - bar_w) * 0.5;
+    double py = 50.0;
+
+    for (int i = 0; i < dots; i++) {
+        double dw = (i == cur_idx) ? active_w : idle_w;
+        rounded_rect(cr, px, py, dw, dot_h, 3.0);
+        if (i == cur_idx) {
+            cairo_pattern_t *act = cairo_pattern_create_linear(px, py, px + dw, py);
+            cairo_pattern_add_color_stop_rgb(act, 0.0, 0.49, 0.81, 1.0);
+            cairo_pattern_add_color_stop_rgb(act, 1.0, 0.73, 0.60, 0.97);
+            cairo_set_source(cr, act);
+            cairo_fill(cr);
+            cairo_pattern_destroy(act);
+        } else {
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.16);
+            cairo_fill(cr);
+        }
+        px += dw + gap;
+    }
+
+    cairo_destroy(cr);
+    cairo_surface_destroy(surf);
     XFlush(g_dpy);
     g_osd_hide_at = now_ms() + OSD_DURATION_MS;
 }
@@ -490,7 +637,8 @@ static void send_tab_with_alt_held(void) {
 
 static void send_alt_tab_once(int dir_right) {
     if (!g_dpy || !g_kc_alt || !g_kc_tab) return;
-    if (dir_right) {
+    int forward = g_cfg.three_h_invert ? !dir_right : dir_right;
+    if (forward) {
         send_key_combo(g_kc_alt, g_kc_tab);
     } else {
         XTestFakeKeyEvent(g_dpy, g_kc_alt, True, CurrentTime);
@@ -684,15 +832,16 @@ static void evaluate_three_finger_gesture(double res_x, double res_y, double acc
     if (g_cfg.three_h_mode != THREE_H_OFF &&
         adx >= g_cfg.three_h_thresh_mm && adx > 1.35 * ady) {
         int dir_right = (dx_mm > 0.0);
+        int forward = g_cfg.three_h_invert ? !dir_right : dir_right;
         if (get_taskview_pid() > 0) {
-            send_key_combo(0, dir_right ? g_kc_right : g_kc_left);
+            send_key_combo(0, forward ? g_kc_right : g_kc_left);
             *gesture_fired = 1;
         } else if (g_cfg.three_h_mode == THREE_H_SCRUB) {
             XTestFakeKeyEvent(g_dpy, g_kc_alt, True, CurrentTime);
             XFlush(g_dpy);
             g_alt_held = 1;
             g_alt_held_since = tnow;
-            if (dir_right) send_tab_with_alt_held();
+            if (forward) send_tab_with_alt_held();
             else send_shift_tab_with_alt_held();
             *step_anchor_x = accum_x;
         } else {
@@ -710,15 +859,18 @@ static void evaluate_three_finger_gesture(double res_x, double res_y, double acc
 
 static void print_usage(const char *prog) {
     printf("winpad-gestures %s - Lightweight Windows-style Precision Touchpad daemon for X11\n"
-           "Usage: %s [--check | --debug | --version | --help]\n",
+           "Usage: %s [--check | --test-osd | --debug | --version | --help]\n",
            WINPAD_VERSION, prog);
 }
 
 int main(int argc, char **argv) {
     int check_only = 0;
+    int test_osd = 0;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--check") == 0 || strcmp(argv[i], "-c") == 0)
             check_only = 1;
+        else if (strcmp(argv[i], "--test-osd") == 0)
+            test_osd = 1;
         else if (strcmp(argv[i], "--debug") == 0 || strcmp(argv[i], "-d") == 0)
             g_debug = 1;
         else if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
@@ -731,6 +883,21 @@ int main(int argc, char **argv) {
     }
 
     load_config();
+
+    if (test_osd) {
+        g_dpy = XOpenDisplay(NULL);
+        if (!g_dpy) return 1;
+        XSetErrorHandler(x11_quiet_err);
+        init_x11_state();
+        int mx = 0, my = 0, mw = 0, mh = 0;
+        get_primary_monitor_rect(&mx, &my, &mw, &mh);
+        printf("OSD_PRIMARY_MONITOR x=%d y=%d w=%d h=%d argb=%d\n", mx, my, mw, mh, g_osd_argb);
+        show_desktop_osd(1, 4);
+        usleep(400000);
+        hide_osd();
+        cleanup_all();
+        return 0;
+    }
 
     if (check_only) {
         char path[512] = {0}, name[256] = {0};
@@ -1001,17 +1168,17 @@ int main(int argc, char **argv) {
                         }
                     }
 
-                    /* 3-finger gestures -> Alt+Tab scrub (L/R), Windows state cycle (Up/Down)
-                     * Wait 32ms before firing initial 3-finger gesture so 4-finger landing doesn't misfire!
-                     */
+                    /* 3-finger gestures -> Alt+Tab scrub (L/R), Windows state cycle (Up/Down) */
                     else if (mode_fingers == 3) {
                         if (g_alt_held) {
                             double step_dx_mm = (accum_x - step_anchor_x) / res_x;
                             if (step_dx_mm >= g_cfg.three_h_step_mm) {
-                                send_tab_with_alt_held();
+                                if (g_cfg.three_h_invert) send_shift_tab_with_alt_held();
+                                else send_tab_with_alt_held();
                                 step_anchor_x = accum_x;
                             } else if (step_dx_mm <= -g_cfg.three_h_step_mm) {
-                                send_shift_tab_with_alt_held();
+                                if (g_cfg.three_h_invert) send_tab_with_alt_held();
+                                else send_shift_tab_with_alt_held();
                                 step_anchor_x = accum_x;
                             }
                         } else if (!gesture_fired && (tnow - gesture_start_ms) >= THREE_F_SETTLE_MS) {

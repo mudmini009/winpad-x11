@@ -25,7 +25,7 @@ else
     echo "[1/5] Installing from user source directory..."
     run_as_user "mkdir -p '$TARGET_HOME/.local/bin'"
     if [ ! -x "$TARGET_HOME/.local/bin/winpad-gestures" ] && [ -f "$TARGET_HOME/.local/src/winpad-gestures.c" ]; then
-        run_as_user "gcc -O2 -flto -Wall -Wextra '$TARGET_HOME/.local/src/winpad-gestures.c' -o '$TARGET_HOME/.local/bin/winpad-gestures' -lX11 -lXtst -lm && strip --strip-unneeded '$TARGET_HOME/.local/bin/winpad-gestures'"
+        run_as_user "gcc -O2 -flto -Wall -Wextra '$TARGET_HOME/.local/src/winpad-gestures.c' -o '$TARGET_HOME/.local/bin/winpad-gestures' \$(pkg-config --cflags --libs cairo-xlib xrender xrandr x11 xtst) -lm && strip --strip-unneeded '$TARGET_HOME/.local/bin/winpad-gestures'"
     fi
     if [ ! -x "$TARGET_HOME/.local/bin/winpad-taskview" ] && [ -f "$TARGET_HOME/.local/src/winpad-taskview.c" ]; then
         if pkg-config --exists xcomposite 2>/dev/null; then
