@@ -28,7 +28,7 @@
 #include <X11/keysym.h>
 #include <X11/XF86keysym.h>
 
-#define WINPAD_VERSION "1.4.0"
+#define WINPAD_VERSION "1.5.0"
 #define MAX_SLOTS 16
 #define ALT_WATCHDOG_MS 15000L
 #define THREE_F_SETTLE_MS 22L
@@ -67,10 +67,20 @@ typedef enum {
     THREE_TAP_SUPER = 1
 } ThreeTapMode;
 
+typedef enum {
+    FOUR_TAP_OFF = 0,
+    FOUR_TAP_PLAY_PAUSE = 1,
+    FOUR_TAP_NOTIFICATIONS = 2,
+    FOUR_TAP_TASKVIEW = 3,
+    FOUR_TAP_SHOW_DESKTOP = 4,
+    FOUR_TAP_SUPER = 5
+} FourTapMode;
+
 typedef struct {
     char device[512];
     char taskview_cmd[512];
     char three_tap_cmd[512];
+    char four_tap_cmd[512];
     TwoFingerMode two_f_mode;
     double two_f_min_mm;
     long two_f_max_ms;
@@ -87,6 +97,9 @@ typedef struct {
     double four_h_thresh_mm;
     double four_h_step_mm;
     double four_v_thresh_mm;
+    FourTapMode four_tap_mode;
+    long four_tap_max_ms;
+    double four_tap_max_mm;
     int edge_drag_slide;
     double edge_drag_margin_mm;
     double edge_drag_speed;
@@ -146,6 +159,7 @@ static KeyCode g_kc_alt = 0;
 static KeyCode g_kc_shift = 0;
 static KeyCode g_kc_tab = 0;
 static KeyCode g_kc_super = 0;
+static KeyCode g_kc_audio_play = 0;
 static KeyCode g_kc_left = 0;
 static KeyCode g_kc_right = 0;
 static KeyCode g_kc_back = 0;
@@ -333,6 +347,9 @@ static void load_config(void) {
     g_cfg.four_h_thresh_mm = 7.5;
     g_cfg.four_h_step_mm = 15.0;
     g_cfg.four_v_thresh_mm = 8.0;
+    g_cfg.four_tap_mode = FOUR_TAP_PLAY_PAUSE;
+    g_cfg.four_tap_max_ms = 260;
+    g_cfg.four_tap_max_mm = 3.5;
     g_cfg.edge_drag_slide = 1;
     g_cfg.edge_drag_margin_mm = 6.0;
     g_cfg.edge_drag_speed = 460.0;
@@ -419,6 +436,21 @@ static void load_config(void) {
         } else if (strcmp(k, "four_finger_step_mm") == 0) {
             double val = atof(v);
             if (val >= 6.0 && val <= 80.0) g_cfg.four_h_step_mm = val;
+        } else if (strcmp(k, "four_finger_tap") == 0) {
+            if (strcmp(v, "off") == 0) g_cfg.four_tap_mode = FOUR_TAP_OFF;
+            else if (strcmp(v, "notifications") == 0) g_cfg.four_tap_mode = FOUR_TAP_NOTIFICATIONS;
+            else if (strcmp(v, "taskview") == 0) g_cfg.four_tap_mode = FOUR_TAP_TASKVIEW;
+            else if (strcmp(v, "show_desktop") == 0) g_cfg.four_tap_mode = FOUR_TAP_SHOW_DESKTOP;
+            else if (strcmp(v, "super") == 0) g_cfg.four_tap_mode = FOUR_TAP_SUPER;
+            else g_cfg.four_tap_mode = FOUR_TAP_PLAY_PAUSE;
+        } else if (strcmp(k, "four_finger_tap_cmd") == 0) {
+            expand_home(v, g_cfg.four_tap_cmd, sizeof(g_cfg.four_tap_cmd));
+        } else if (strcmp(k, "four_finger_tap_max_ms") == 0) {
+            long val = atol(v);
+            if (val >= 80 && val <= 800) g_cfg.four_tap_max_ms = val;
+        } else if (strcmp(k, "four_finger_tap_max_mm") == 0) {
+            double val = atof(v);
+            if (val >= 1.0 && val <= 15.0) g_cfg.four_tap_max_mm = val;
         } else if (strcmp(k, "edge_drag_slide") == 0) {
             g_cfg.edge_drag_slide = parse_bool(v);
         } else if (strcmp(k, "edge_drag_margin_mm") == 0) {
@@ -599,6 +631,9 @@ static void init_x11_state(void) {
 #ifdef XF86XK_Back
     g_kc_back  = XKeysymToKeycode(g_dpy, XF86XK_Back);
     g_kc_fwd   = XKeysymToKeycode(g_dpy, XF86XK_Forward);
+#endif
+#ifdef XF86XK_AudioPlay
+    g_kc_audio_play = XKeysymToKeycode(g_dpy, XF86XK_AudioPlay);
 #endif
 
     g_atom_showing_desktop  = XInternAtom(g_dpy, "_NET_SHOWING_DESKTOP", False);
@@ -1095,6 +1130,48 @@ static int switch_workspace(int delta) {
             show_desktop_osd(cur, cur, count);
     }
     return 1;
+}
+
+static int is_clean_tap(int target_fingers, int peak_fingers, int blocked,
+                        long dt_ms, long max_ms,
+                        double travel_mm, double net_disp_mm, double max_mm) {
+    return (!blocked && peak_fingers == target_fingers &&
+            dt_ms > 0 && dt_ms <= max_ms &&
+            travel_mm <= max_mm && net_disp_mm <= max_mm);
+}
+
+static void trigger_four_finger_tap(void) {
+    if (g_cfg.four_tap_cmd[0]) {
+        spawn_cmd(g_cfg.four_tap_cmd);
+        return;
+    }
+    switch (g_cfg.four_tap_mode) {
+    case FOUR_TAP_PLAY_PAUSE:
+        if (g_kc_audio_play)
+            send_key_combo(0, g_kc_audio_play);
+        else
+            spawn_cmd("playerctl play-pause 2>/dev/null || true");
+        break;
+    case FOUR_TAP_NOTIFICATIONS:
+        spawn_cmd("xfce4-notifyd-config");
+        break;
+    case FOUR_TAP_TASKVIEW:
+        spawn_cmd(g_cfg.taskview_cmd);
+        break;
+    case FOUR_TAP_SHOW_DESKTOP: {
+        long showing = 0;
+        get_ewmh_cardinal(g_atom_showing_desktop, &showing);
+        send_ewmh_root_msg(g_atom_showing_desktop, showing ? 0 : 1, 0);
+        break;
+    }
+    case FOUR_TAP_SUPER:
+        if (g_kc_super)
+            send_key_combo(0, g_kc_super);
+        break;
+    case FOUR_TAP_OFF:
+    default:
+        break;
+    }
 }
 
 static void spawn_cmd(const char *cmd) {
@@ -1603,19 +1680,26 @@ int main(int argc, char **argv) {
 
                     if (fingers == 0) {
                         double net_disp_mm = hypot(accum_x / res_x, accum_y / res_y);
+                        long tap_dt = touch_start_ms > 0 ? (tnow - touch_start_ms) : 0L;
+                        int tap_blocked = (any_multi_gesture || g_alt_held || three_tv_scrub || four_f_locked);
+
                         if (g_cfg.three_tap_mode != THREE_TAP_OFF &&
-                            peak_fingers == 3 && !any_multi_gesture &&
-                            !g_alt_held && !three_tv_scrub && !four_f_locked &&
-                            touch_start_ms > 0 && (tnow - touch_start_ms) <= g_cfg.three_tap_max_ms &&
-                            touch_travel_mm <= g_cfg.three_tap_max_mm &&
-                            net_disp_mm <= g_cfg.three_tap_max_mm) {
+                            is_clean_tap(3, peak_fingers, tap_blocked, tap_dt, g_cfg.three_tap_max_ms,
+                                         touch_travel_mm, net_disp_mm, g_cfg.three_tap_max_mm)) {
                             if (g_debug)
                                 fprintf(stderr, "DEBUG: 3-finger Tap (dt=%ldms travel=%.1fmm) -> Super\n",
-                                        tnow - touch_start_ms, touch_travel_mm);
+                                        tap_dt, touch_travel_mm);
                             if (g_cfg.three_tap_cmd[0])
                                 spawn_cmd(g_cfg.three_tap_cmd);
                             else if (g_kc_super)
                                 send_key_combo(0, g_kc_super);
+                        } else if ((g_cfg.four_tap_mode != FOUR_TAP_OFF || g_cfg.four_tap_cmd[0]) &&
+                                   is_clean_tap(4, peak_fingers, tap_blocked, tap_dt, g_cfg.four_tap_max_ms,
+                                                touch_travel_mm, net_disp_mm, g_cfg.four_tap_max_mm)) {
+                            if (g_debug)
+                                fprintf(stderr, "DEBUG: 4-finger Tap (dt=%ldms travel=%.1fmm)\n",
+                                        tap_dt, touch_travel_mm);
+                            trigger_four_finger_tap();
                         }
 
                         release_alt_if_held();

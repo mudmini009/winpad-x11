@@ -2,11 +2,15 @@
 
 All notable changes to `winpad-x11` are documented in this file.
 
-## [1.4.0] - 2026-11-26
+## [1.5.0] - 2026-11-26
 
 ### Added
+- **Configurable 4-finger Tap (`four_finger_tap`):** Added clean multi-finger tap detection (`is_clean_tap()`) supporting `play_pause` (`XF86AudioPlay` media toggle, default on Xubuntu with zero extra popups/deps), `notifications` (`xfce4-notifyd-config`), `taskview`, `show_desktop`, `super`, `off`, and custom `four_finger_tap_cmd`.
 - **3-finger Tap → `Super` / Search (`three_finger_tap = super`):** A quick 3-finger tap sends `Super_L` (opening Whisker Menu / Search on Xubuntu, or any custom `three_finger_tap_cmd`), automatically muting touchpad Middle Click (`Button 2`) while active and restoring it cleanly on exit or `three_finger_tap = off`.
 - **1-finger Double-Tap / Click-Drag Edge Auto-Slide (`edge_drag_slide = true`):** Reaching the outer border/corner of the touchpad while dragging continues gliding the cursor smoothly at 60fps via `XTestFakeRelativeMotionEvent` until you pull inward or lift your finger (`0%` idle CPU).
+- **GitHub Actions CI & Issue Templates:** Dual `ubuntu-22.04` / `ubuntu-24.04` build checks (`-Wall -Wextra -Werror`, both `XComposite` and fallback modes), bug/feature templates, and `assets/osd-preview.svg`.
+
+## [1.4.0] - 2026-11-26
 
 ### Changed
 - **Windows-authentic 4-finger desktop switching:** Changed default 4-finger horizontal behavior (`four_finger_scrub = false`) to switch **one Virtual Desktop per swipe** (`D1 → D2` per swipe), matching Windows 10/11 Precision Touchpad ergonomics. Set `four_finger_scrub = true` in `~/.config/winpad-gestures.conf` to opt back into continuous multi-desktop scrubbing.

@@ -35,6 +35,7 @@
 ### 🎯 True Windows 11 Ergonomics
 - Exact **3-state Up/Down cycle** (Task View ↔ Windows ↔ Desktop)
 - **3-finger Tap → `Super`** (Search / Whisker Menu, no middle-click paste)
+- **4-finger Tap → Media Play/Pause** *(or Notifications / Task View / custom)*
 - **Double-tap Drag Edge Auto-Slide** at 60fps when hitting borders
 - **1-swipe = 1-desktop (`4F`)** + **end-clamped `Alt+Tab` (`3F`)**
 
@@ -56,6 +57,7 @@ Most Linux X11 gesture tools either run heavy scripting runtimes (Ruby/Python), 
 | **Runtime deps** | **None** | PPA / pugixml / GTK | `libinput-tools`, `xdotool` | Ruby, `libinput-tools`, `xdotool` | `libinput-dev`, `xdotool` |
 | **Windows 3-state Up/Down cycle** | **Yes** | No | No | No | No |
 | **3-finger Tap → Search (`Super`)** | **Yes** (auto-mutes Middle Click) | Partial | No | No | No |
+| **4-finger Tap (Media / Notifications)** | **Yes** (`play_pause` / `notifications` / custom) | Partial | No | No | No |
 | **Double-tap Drag Edge Auto-Slide** | **Yes** (60fps edge glide on drag) | No | No | No | No |
 | **Interactive `Alt+Tab` scrubbing** | **Yes** (holds `Alt`, clamped at ends) | Partial | No | No | No |
 | **1-swipe = 1-desktop (`4F`)** | **Yes** (Windows 11 default + Fluent OSD) | Manual | Manual | Manual | Manual |
@@ -88,6 +90,7 @@ Most Linux X11 gesture tools either run heavy scripting runtimes (Ruby/Python), 
 
 - **Double-tap & Click-drag Edge Auto-Slide:** When dragging a window, file, or text selection and your finger reaches the outer `6 mm` border/corner of the touchpad, `winpad-gestures` smoothly glides the pointer at 60fps (`Button1` held, zero sticky drop lag) until you pull inward or lift your finger (`edge_drag_slide = true`).
 - **Windows-style 3-finger Tap → `Super` (Search / Whisker Menu):** A quick 3-finger tap (`<= 260 ms`, `<= 3.5 mm` travel) presses `Super_L` to open Search / Whisker Menu on Xubuntu, automatically muting touchpad Middle Click (`Button 2`) while active so it never accidentally pastes or closes tabs (`three_finger_tap = off` restores Linux Middle Click).
+- **Customizable 4-finger Tap:** A quick 4-finger tap (`<= 260 ms`, `<= 3.5 mm` travel, zero mouse-button conflict) triggers **Media Play/Pause (`XF86AudioPlay`)** by default on Xubuntu, or can be switched in config to `notifications` (`xfce4-notifyd-config`), `taskview`, `show_desktop`, `super`, `off`, or any custom command (`four_finger_tap_cmd`).
 - **Fast-landing merge & 45 ms bounce hysteresis:** Preserves rapid initial swipe momentum during multi-finger landing (`< 55 ms`), with a `22 ms` 3-vs-4 settle window, `45 ms` downward-bounce hysteresis, and `4 -> 3` liftoff lock so swipes feel instantaneous while staying misfire-proof.
 - **Boundary-clamped 3-finger `Alt+Tab` scrubbing:** Slide across the touchpad to scrub smoothly across open windows while holding `Alt`—**stopping cleanly at the first and last window** (Windows 10/11 style, no wraparound loop), even if starting from the desktop or Show Desktop.
 - **Windows-authentic 4-finger Desktop switch (`1 swipe = 1 desktop`):** Each 4-finger swipe Left/Right switches **one** Virtual Desktop cleanly with a 60fps time-compensated **Primary-Monitor Fluent ARGB OSD** via XRandR + Cairo (or set `four_finger_scrub = true` in config for continuous multi-desktop scrubbing).
@@ -112,6 +115,7 @@ Most Linux X11 gesture tools either run heavy scripting runtimes (Ruby/Python), 
 | **3F** | Tap | Windows Search | Sends `Super_L` (Whisker Menu / Search; `off` restores Middle Click) | ✅ Exact |
 | **3F** | Swipe Up / Down | Task View ↔ Windows ↔ Desktop | Exact 3-state cycle (`winpad-taskview` + `_NET_SHOWING_DESKTOP`) | ✅ Exact |
 | **3F** | Swipe Left / Right | Interactive `Alt+Tab` (clamped ends) | Holds `Alt`, scrubs `Tab`/`Shift+Tab`, **stops at ends** | ✅ Exact |
+| **4F** | Tap | Notification Center | `play_pause` (`XF86AudioPlay` default) or `notifications` (`xfce4-notifyd-config`) / custom | ⚙️ Configurable |
 | **4F** | Swipe Left / Right | 1 desktop per swipe (Right = next) | 1 desktop per swipe (`workspace_direct`) + Fluent OSD | ✅ Exact |
 | **4F** | Swipe Up / Down | Task View ↔ Windows ↔ Desktop | Same exact 3-state cycle | ✅ Exact |
 
@@ -233,6 +237,10 @@ four_finger_horiz = workspace_direct
 four_finger_scrub = false
 four_finger_thresh_mm = 7.5
 four_finger_step_mm = 15.0
+
+# 4-finger tap: play_pause (XF86AudioPlay) | notifications (xfce4-notifyd-config) | taskview | show_desktop | super | off
+four_finger_tap = play_pause
+# four_finger_tap_cmd = xfce4-notifyd-config
 
 # 3/4-finger Swipe Up command (can also swap for xfdashboard or rofi -show window)
 taskview_cmd = ~/.local/bin/winpad-taskview
