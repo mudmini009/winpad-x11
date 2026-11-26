@@ -16,7 +16,7 @@
 
   <!-- Top Header -->
   <text x="36" y="46" fill="#eef2ff" font-family="Segoe UI, Ubuntu, sans-serif" font-size="22" font-weight="700">Task View</text>
-  <text x="36" y="65" fill="#94a3b8" font-family="Segoe UI, Ubuntu, sans-serif" font-size="12">4 open windows  •  4 desktops</text>
+  <text x="36" y="65" fill="#94a3b8" font-family="Segoe UI, Ubuntu, sans-serif" font-size="12">3 open windows  •  4 desktops</text>
 
   <!-- Desktop Pills -->
   <g transform="translate(510, 32)" font-family="Segoe UI, Ubuntu, sans-serif" font-size="12" font-weight="600">
