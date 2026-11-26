@@ -1132,6 +1132,20 @@ static int switch_workspace(int delta) {
     return 1;
 }
 
+static void spawn_cmd(const char *cmd) {
+    if (!cmd || !cmd[0]) return;
+    pid_t pid = fork();
+    if (pid == 0) {
+        signal(SIGINT, SIG_DFL);
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGHUP, SIG_DFL);
+        signal(SIGCHLD, SIG_DFL);
+        setsid();
+        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        _exit(127);
+    }
+}
+
 static int is_clean_tap(int target_fingers, int peak_fingers, int blocked,
                         long dt_ms, long max_ms,
                         double travel_mm, double net_disp_mm, double max_mm) {
@@ -1171,20 +1185,6 @@ static void trigger_four_finger_tap(void) {
     case FOUR_TAP_OFF:
     default:
         break;
-    }
-}
-
-static void spawn_cmd(const char *cmd) {
-    if (!cmd || !cmd[0]) return;
-    pid_t pid = fork();
-    if (pid == 0) {
-        signal(SIGINT, SIG_DFL);
-        signal(SIGTERM, SIG_DFL);
-        signal(SIGHUP, SIG_DFL);
-        signal(SIGCHLD, SIG_DFL);
-        setsid();
-        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
-        _exit(127);
     }
 }
 
