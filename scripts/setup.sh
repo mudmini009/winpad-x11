@@ -73,6 +73,7 @@ if command -v xfconf-query >/dev/null 2>&1; then
     xfconf-query -c xfwm4 -p /general/mousewheel_rollup -s false 2>/dev/null || true
     xfconf-query -c xfwm4 -p /general/scroll_workspaces -s false 2>/dev/null || true
     xfconf-query -c xfwm4 -p /general/workspace_count -s 4 2>/dev/null || true
+    xfconf-query -c xfwm4 -p /general/cycle_minimized -s true 2>/dev/null || true
     for ch in $(xfconf-query -c pointers -l | sed -n "s|^\(/[^/]*_Touchpad\)/.*|\1|p" | sort -u); do
         xfconf-query -c pointers -p "$ch/ReverseScrolling" -n -t bool -s true 2>/dev/null || true
         xfconf-query -c pointers -p "$ch/Properties/libinput_Tapping_Enabled" -n -t int -s 1 2>/dev/null || true

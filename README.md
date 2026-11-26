@@ -56,7 +56,8 @@ Unlike simple toggle scripts, 3-finger & 4-finger vertical swipes follow the exa
 - **Task View open → Swipe Down:** Closes Task View back to your windows
 
 ### Smart Responsiveness & Anti-Misfire Guards
-- **45 ms downward-bounce hysteresis:** Rapid finger jitter or staggered liftoff never resets a swipe or drops `Alt+Tab` mid-gesture.
+- **32 ms 3-vs-4 finger settle + 45 ms bounce hysteresis:** Ensures rapid 4-finger swipes never misfire as 3-finger gestures during finger landing, and staggered finger liftoff never drops `Alt+Tab` mid-gesture.
+- **Task View aware navigation:** When Task View is open, 3-finger Left/Right selects windows inside Task View, 4-finger Left/Right switches desktops live, and 4-finger switches from normal view display a lightweight pure-X11 Desktop OSD pill.
 - **Terminal-safe 2-finger Back/Forward:** Checks active window `WM_CLASS` via X11—sends `XF86Back`/`XF86Forward` to browsers & file managers, `Alt+Left`/`Alt+Right` to IDEs, and stays silent in terminals.
 - **Scroll lock protection:** Vertical 2-finger scrolling locks out horizontal Back/Forward flicks (`> 5.5 mm` vertical motion), preventing accidental navigation while scrolling.
 - **XKB layout protection:** Saves and restores active XKB group via `XkbLockGroup` so `Alt+Shift+Tab` never accidentally flips multi-language layouts (e.g. `grp:alt_shift_toggle`).
@@ -65,7 +66,7 @@ Unlike simple toggle scripts, 3-finger & 4-finger vertical swipes follow the exa
 
 ## 🪟 Live Task View
 
-Swipe up with **3 or 4 fingers** to open **`winpad-taskview`** — a sleek, Fluent-styled overview with **real-time `XComposite` window thumbnails**, clickable **Desktop 1–4 switcher pills**, **type-to-filter search**, and **0 MB idle RAM** (it only runs while open and exits the instant you pick a window or close it).
+Swipe up with **3 or 4 fingers** to open **`winpad-taskview`** — matching Windows 11's layout with **real-time `XComposite` window thumbnails** centered for the active desktop, a **Virtual Desktops dock along the bottom** (with window counts and click-to-switch), an **All Desktops** toggle, **type-to-filter search**, and **0 MB idle RAM**.
 
 <div align="center">
 <img src="assets/taskview-preview.svg" alt="winpad-taskview preview" width="100%" />
@@ -79,8 +80,8 @@ Observed on Ubuntu 22.04 / Xubuntu (`x86_64`, compiled with `gcc -O2 -flto` and 
 
 | Component | Binary Size | Memory (RSS) | Idle CPU |
 |---|---:|---:|---:|
-| `winpad-gestures` (background daemon) | **31 KB** | **~2.9 MB (`2988 KB`)** | **0.0%** (`poll()`) |
-| `winpad-taskview` (on-demand Task View) | **43 KB** | **0 MB idle** (exits on close) | **0.0%** |
+| `winpad-gestures` (background daemon) | **35 KB** | **~3.0 MB (`3072 KB`)** | **0.0%** (`poll()`) |
+| `winpad-taskview` (on-demand Task View) | **47 KB** | **0 MB idle** (exits on close) | **0.0%** |
 
 ---
 

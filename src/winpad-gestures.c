@@ -24,9 +24,12 @@
 #include <X11/keysym.h>
 #include <X11/XF86keysym.h>
 
-#define WINPAD_VERSION "1.0.0"
+#define WINPAD_VERSION "1.1.0"
 #define MAX_SLOTS 16
 #define ALT_WATCHDOG_MS 15000L
+#define THREE_F_SETTLE_MS 32L
+#define DROP_HYSTERESIS_MS 45L
+#define OSD_DURATION_MS 650L
 #define BITS_PER_LONG (8 * sizeof(unsigned long))
 #define NBITS(x) ((((x) - 1) / BITS_PER_LONG) + 1)
 #define TEST_BIT(bit, arr) (((arr)[(bit) / BITS_PER_LONG] >> ((bit) % BITS_PER_LONG)) & 1UL)
@@ -83,6 +86,10 @@ static int g_debug = 0;
 static int g_alt_held = 0;
 static long g_alt_held_since = 0;
 
+static Window g_osd_win = None;
+static GC g_osd_gc = None;
+static long g_osd_hide_at = 0;
+
 static KeyCode g_kc_alt = 0;
 static KeyCode g_kc_shift = 0;
 static KeyCode g_kc_tab = 0;
@@ -95,6 +102,8 @@ static Atom g_atom_showing_desktop = None;
 static Atom g_atom_current_desktop = None;
 static Atom g_atom_num_desktops = None;
 static Atom g_atom_active_window = None;
+static Atom g_atom_wm_type = None;
+static Atom g_atom_wm_type_notif = None;
 
 static Config g_cfg;
 
@@ -117,6 +126,14 @@ static void on_signal(int sig) {
         g_running = 0;
 }
 
+static void hide_osd(void) {
+    if (g_osd_win != None && g_dpy) {
+        XUnmapWindow(g_dpy, g_osd_win);
+        XFlush(g_dpy);
+        g_osd_hide_at = 0;
+    }
+}
+
 static void release_alt_if_held(void) {
     if (g_alt_held && g_dpy && g_kc_alt) {
         XTestFakeKeyEvent(g_dpy, g_kc_alt, False, CurrentTime);
@@ -129,6 +146,8 @@ static void release_alt_if_held(void) {
 static void cleanup_all(void) {
     release_alt_if_held();
     if (g_dpy) {
+        if (g_osd_gc) XFreeGC(g_dpy, g_osd_gc);
+        if (g_osd_win != None) XDestroyWindow(g_dpy, g_osd_win);
         XCloseDisplay(g_dpy);
         g_dpy = NULL;
     }
@@ -367,6 +386,57 @@ static void init_x11_state(void) {
     g_atom_current_desktop = XInternAtom(g_dpy, "_NET_CURRENT_DESKTOP", False);
     g_atom_num_desktops    = XInternAtom(g_dpy, "_NET_NUMBER_OF_DESKTOPS", False);
     g_atom_active_window   = XInternAtom(g_dpy, "_NET_ACTIVE_WINDOW", False);
+    g_atom_wm_type         = XInternAtom(g_dpy, "_NET_WM_WINDOW_TYPE", False);
+    g_atom_wm_type_notif   = XInternAtom(g_dpy, "_NET_WM_WINDOW_TYPE_NOTIFICATION", False);
+
+    XSetWindowAttributes swa;
+    swa.override_redirect = True;
+    swa.background_pixel = 0x161a26;
+    swa.border_pixel = 0x7aa2f7;
+    swa.save_under = True;
+    g_osd_win = XCreateWindow(g_dpy, g_root, 0, 0, 220, 56, 1,
+                              CopyFromParent, InputOutput, CopyFromParent,
+                              CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWSaveUnder,
+                              &swa);
+    if (g_osd_win != None) {
+        XChangeProperty(g_dpy, g_osd_win, g_atom_wm_type, XA_ATOM, 32,
+                        PropModeReplace, (unsigned char *)&g_atom_wm_type_notif, 1);
+        g_osd_gc = XCreateGC(g_dpy, g_osd_win, 0, NULL);
+    }
+}
+
+static void show_desktop_osd(long cur_idx, long total) {
+    if (g_osd_win == None || !g_osd_gc || !g_dpy) return;
+    int scr = DefaultScreen(g_dpy);
+    int sw = DisplayWidth(g_dpy, scr);
+    int sh = DisplayHeight(g_dpy, scr);
+    int w = 220, h = 56;
+    int x = (sw - w) / 2;
+    int y = sh - h - 76;
+
+    XMoveResizeWindow(g_dpy, g_osd_win, x, y, (unsigned int)w, (unsigned int)h);
+    XMapRaised(g_dpy, g_osd_win);
+
+    XSetForeground(g_dpy, g_osd_gc, 0x161a26);
+    XFillRectangle(g_dpy, g_osd_win, g_osd_gc, 0, 0, (unsigned int)w, (unsigned int)h);
+
+    char txt[32];
+    snprintf(txt, sizeof(txt), "Desktop %ld / %ld", cur_idx + 1, total);
+    XSetForeground(g_dpy, g_osd_gc, 0xf1f5f9);
+    int tx = (w - (int)strlen(txt) * 6) / 2;
+    XDrawString(g_dpy, g_osd_win, g_osd_gc, tx > 8 ? tx : 8, 22, txt, (int)strlen(txt));
+
+    int dots = (int)(total > 8 ? 8 : total);
+    int dot_w = 16, gap = 8;
+    int total_w = dots * dot_w + (dots - 1) * gap;
+    int start_x = (w - total_w) / 2;
+    for (int i = 0; i < dots; i++) {
+        XSetForeground(g_dpy, g_osd_gc, (i == cur_idx) ? 0x7aa2f7 : 0x334155);
+        XFillRectangle(g_dpy, g_osd_win, g_osd_gc, start_x + i * (dot_w + gap), 35,
+                       (unsigned int)dot_w, 6);
+    }
+    XFlush(g_dpy);
+    g_osd_hide_at = now_ms() + OSD_DURATION_MS;
 }
 
 static void send_key_combo(KeyCode mod, KeyCode key) {
@@ -401,7 +471,6 @@ static void send_shift_tab_with_alt_held(void) {
     XTestFakeKeyEvent(g_dpy, g_kc_shift, False, CurrentTime);
     XFlush(g_dpy);
 
-    /* Prevent grp:alt_shift_toggle from flipping multi-language layouts. */
     if (have_xkb) {
         XkbStateRec st_after;
         if (XkbGetState(g_dpy, XkbUseCoreKbd, &st_after) == Success &&
@@ -465,6 +534,27 @@ static void send_ewmh_root_msg(Atom prop, long d0, long d1) {
     XFlush(g_dpy);
 }
 
+static pid_t get_taskview_pid(void) {
+    char pidpath[128];
+    snprintf(pidpath, sizeof(pidpath), "/tmp/winpad-taskview-%d.pid", (int)getuid());
+    FILE *f = fopen(pidpath, "r");
+    if (!f) return 0;
+    long pid = 0;
+    pid_t alive = 0;
+    if (fscanf(f, "%ld", &pid) == 1 && pid > 1) {
+        char commpath[128], comm[64] = {0};
+        snprintf(commpath, sizeof(commpath), "/proc/%ld/comm", pid);
+        FILE *cf = fopen(commpath, "r");
+        if (cf) {
+            if (fgets(comm, sizeof(comm), cf) && strncmp(comm, "winpad-taskview", 15) == 0)
+                alive = (pid_t)pid;
+            fclose(cf);
+        }
+    }
+    fclose(f);
+    return alive;
+}
+
 static int switch_workspace(int delta) {
     long count = 1, cur = 0;
     if (!get_ewmh_cardinal(g_atom_num_desktops, &count) || count <= 1)
@@ -473,33 +563,18 @@ static int switch_workspace(int delta) {
     long target = cur + delta;
     if (target < 0) target = 0;
     if (target >= count) target = count - 1;
-    if (target != cur)
+    if (target != cur) {
         send_ewmh_root_msg(g_atom_current_desktop, target, CurrentTime);
-    return 1;
-}
-
-static int check_taskview_pid(int do_kill) {
-    char pidpath[128];
-    snprintf(pidpath, sizeof(pidpath), "/tmp/winpad-taskview-%d.pid", (int)getuid());
-    FILE *f = fopen(pidpath, "r");
-    if (!f) return 0;
-    long pid = 0;
-    int alive = 0;
-    if (fscanf(f, "%ld", &pid) == 1 && pid > 1) {
-        char commpath[128], comm[64] = {0};
-        snprintf(commpath, sizeof(commpath), "/proc/%ld/comm", pid);
-        FILE *cf = fopen(commpath, "r");
-        if (cf) {
-            if (fgets(comm, sizeof(comm), cf) && strncmp(comm, "winpad-taskview", 15) == 0) {
-                alive = 1;
-                if (do_kill)
-                    kill((pid_t)pid, SIGTERM);
-            }
-            fclose(cf);
-        }
+        pid_t tv = get_taskview_pid();
+        if (tv > 0)
+            kill(tv, SIGUSR1);
+        else
+            show_desktop_osd(target, count);
+    } else {
+        if (get_taskview_pid() == 0)
+            show_desktop_osd(cur, count);
     }
-    fclose(f);
-    return alive;
+    return 1;
 }
 
 static void spawn_cmd(const char *cmd) {
@@ -518,12 +593,10 @@ static void spawn_cmd(const char *cmd) {
 static void handle_vertical_gesture(int is_up) {
     long showing = 0;
     get_ewmh_cardinal(g_atom_showing_desktop, &showing);
+    pid_t tv = get_taskview_pid();
 
     if (is_up) {
-        if (check_taskview_pid(0)) {
-            if (g_debug) fprintf(stderr, "DEBUG: Up while Task View open (stay)\n");
-            return;
-        }
+        if (tv > 0) return;
         if (showing) {
             if (g_debug) fprintf(stderr, "DEBUG: Up -> Restore windows from Show Desktop\n");
             send_ewmh_root_msg(g_atom_showing_desktop, 0, 0);
@@ -532,15 +605,14 @@ static void handle_vertical_gesture(int is_up) {
             spawn_cmd(g_cfg.taskview_cmd);
         }
     } else {
-        if (check_taskview_pid(1)) {
+        if (tv > 0) {
             if (g_debug) fprintf(stderr, "DEBUG: Down -> Close Task View\n");
+            kill(tv, SIGTERM);
             return;
         }
         if (!showing) {
             if (g_debug) fprintf(stderr, "DEBUG: Down -> Show Desktop\n");
             send_ewmh_root_msg(g_atom_showing_desktop, 1, 0);
-        } else {
-            if (g_debug) fprintf(stderr, "DEBUG: Down while Desktop shown (stay)\n");
         }
     }
 }
@@ -600,6 +672,40 @@ static void trigger_back_forward(int is_back) {
 
 static void reap_children(void) {
     while (waitpid(-1, NULL, WNOHANG) > 0) {}
+}
+
+static void evaluate_three_finger_gesture(double res_x, double res_y, double accum_x, double accum_y,
+                                          double *step_anchor_x, int *gesture_fired, long tnow) {
+    double dx_mm = accum_x / res_x;
+    double dy_mm = accum_y / res_y;
+    double adx = fabs(dx_mm);
+    double ady = fabs(dy_mm);
+
+    if (g_cfg.three_h_mode != THREE_H_OFF &&
+        adx >= g_cfg.three_h_thresh_mm && adx > 1.35 * ady) {
+        int dir_right = (dx_mm > 0.0);
+        if (get_taskview_pid() > 0) {
+            send_key_combo(0, dir_right ? g_kc_right : g_kc_left);
+            *gesture_fired = 1;
+        } else if (g_cfg.three_h_mode == THREE_H_SCRUB) {
+            XTestFakeKeyEvent(g_dpy, g_kc_alt, True, CurrentTime);
+            XFlush(g_dpy);
+            g_alt_held = 1;
+            g_alt_held_since = tnow;
+            if (dir_right) send_tab_with_alt_held();
+            else send_shift_tab_with_alt_held();
+            *step_anchor_x = accum_x;
+        } else {
+            send_alt_tab_once(dir_right);
+            *gesture_fired = 1;
+        }
+    } else if (-dy_mm >= g_cfg.three_v_thresh_mm && ady > 1.35 * adx) {
+        *gesture_fired = 1;
+        handle_vertical_gesture(1);
+    } else if (dy_mm >= g_cfg.three_v_thresh_mm && ady > 1.35 * adx) {
+        *gesture_fired = 1;
+        handle_vertical_gesture(0);
+    }
 }
 
 static void print_usage(const char *prog) {
@@ -713,7 +819,15 @@ int main(int argc, char **argv) {
                 load_config();
             }
 
-            int timeout_ms = (g_alt_held && drop_pending_since > 0) ? 30 : 1000;
+            long tnow_loop = now_ms();
+            if (g_osd_hide_at > 0 && tnow_loop >= g_osd_hide_at)
+                hide_osd();
+
+            int timeout_ms = 1000;
+            if (g_alt_held && drop_pending_since > 0) timeout_ms = 25;
+            else if (mode_fingers == 3 && !gesture_fired && !g_alt_held) timeout_ms = 20;
+            else if (g_osd_hide_at > 0) timeout_ms = 50;
+
             struct pollfd pfd = { .fd = fd, .events = POLLIN, .revents = 0 };
             int pr = poll(&pfd, 1, timeout_ms);
             if (pr < 0) {
@@ -722,7 +836,14 @@ int main(int argc, char **argv) {
             }
             if (pr == 0) {
                 long tnow = now_ms();
-                if (drop_pending_since > 0 && (tnow - drop_pending_since) >= 45) {
+                if (g_osd_hide_at > 0 && tnow >= g_osd_hide_at)
+                    hide_osd();
+                if (mode_fingers == 3 && !gesture_fired && !g_alt_held &&
+                    drop_pending_since == 0 && (tnow - gesture_start_ms) >= THREE_F_SETTLE_MS) {
+                    evaluate_three_finger_gesture(res_x, res_y, accum_x, accum_y,
+                                                  &step_anchor_x, &gesture_fired, tnow);
+                }
+                if (drop_pending_since > 0 && (tnow - drop_pending_since) >= DROP_HYSTERESIS_MS) {
                     release_alt_if_held();
                     drop_pending_since = 0;
                     if (mode_fingers > 2) mode_fingers = 2;
@@ -830,7 +951,7 @@ int main(int argc, char **argv) {
                         if (mode_fingers >= 3) {
                             if (drop_pending_since == 0) {
                                 drop_pending_since = tnow;
-                            } else if ((tnow - drop_pending_since) >= 45) {
+                            } else if ((tnow - drop_pending_since) >= DROP_HYSTERESIS_MS) {
                                 if (g_alt_held && fingers < 3)
                                     release_alt_if_held();
                                 mode_fingers = fingers;
@@ -854,9 +975,6 @@ int main(int argc, char **argv) {
                         double fdy = sum_dy / (double)shared;
                         accum_x += fdx;
                         accum_y += fdy;
-
-                        if (g_debug && mode_fingers == 2 && fabs(fdy / res_y) > 4.0)
-                            fprintf(stderr, "DEBUG_2F_JUMP: fdy_mm=%.2f (slots=%d)\n", fdy / res_y, n_active);
                     }
 
                     double dx_mm = accum_x / res_x;
@@ -883,7 +1001,9 @@ int main(int argc, char **argv) {
                         }
                     }
 
-                    /* 3-finger gestures -> Alt+Tab scrub (L/R), Windows state cycle (Up/Down) */
+                    /* 3-finger gestures -> Alt+Tab scrub (L/R), Windows state cycle (Up/Down)
+                     * Wait 32ms before firing initial 3-finger gesture so 4-finger landing doesn't misfire!
+                     */
                     else if (mode_fingers == 3) {
                         if (g_alt_held) {
                             double step_dx_mm = (accum_x - step_anchor_x) / res_x;
@@ -894,33 +1014,13 @@ int main(int argc, char **argv) {
                                 send_shift_tab_with_alt_held();
                                 step_anchor_x = accum_x;
                             }
-                        } else if (!gesture_fired) {
-                            if (g_cfg.three_h_mode != THREE_H_OFF &&
-                                adx >= g_cfg.three_h_thresh_mm && adx > 1.35 * ady) {
-                                int dir_right = (dx_mm > 0.0);
-                                if (g_cfg.three_h_mode == THREE_H_SCRUB) {
-                                    XTestFakeKeyEvent(g_dpy, g_kc_alt, True, CurrentTime);
-                                    XFlush(g_dpy);
-                                    g_alt_held = 1;
-                                    g_alt_held_since = tnow;
-                                    if (dir_right) send_tab_with_alt_held();
-                                    else send_shift_tab_with_alt_held();
-                                    step_anchor_x = accum_x;
-                                } else {
-                                    send_alt_tab_once(dir_right);
-                                    gesture_fired = 1;
-                                }
-                            } else if (-dy_mm >= g_cfg.three_v_thresh_mm && ady > 1.35 * adx) {
-                                gesture_fired = 1;
-                                handle_vertical_gesture(1);
-                            } else if (dy_mm >= g_cfg.three_v_thresh_mm && ady > 1.35 * adx) {
-                                gesture_fired = 1;
-                                handle_vertical_gesture(0);
-                            }
+                        } else if (!gesture_fired && (tnow - gesture_start_ms) >= THREE_F_SETTLE_MS) {
+                            evaluate_three_finger_gesture(res_x, res_y, accum_x, accum_y,
+                                                          &step_anchor_x, &gesture_fired, tnow);
                         }
                     }
 
-                    /* 4-finger gestures -> Switch Workspace / Window (L/R), Windows state cycle (Up/Down) */
+                    /* 4-finger gestures -> Switch Virtual Desktop (L/R), Windows state cycle (Up/Down) */
                     else if (mode_fingers == 4 && !gesture_fired) {
                         if (g_cfg.four_h_mode != FOUR_H_OFF &&
                             adx >= g_cfg.four_h_thresh_mm && adx > 1.35 * ady) {
