@@ -50,9 +50,9 @@
     <text x="26" y="33" text-anchor="middle" fill="#bb9af7" font-family="Segoe UI, sans-serif" font-size="13" font-weight="800">4F</text>
     <text x="48" y="33" fill="#e2e8f0" font-family="Segoe UI, sans-serif" font-size="15" font-weight="700">Four Fingers</text>
 
-    <text x="20" y="72" fill="#bb9af7" font-family="Segoe UI, sans-serif" font-size="12.5" font-weight="700">Swipe Left / Right</text>
-    <text x="20" y="90" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="12">Switch Virtual Desktops / Workspaces</text>
-    <text x="20" y="107" fill="#64748b" font-family="Segoe UI, sans-serif" font-size="11">(Auto-falls back to Alt+Tab if 1 desktop)</text>
+    <text x="20" y="72" fill="#bb9af7" font-family="Segoe UI, sans-serif" font-size="12.5" font-weight="700">Continuous Swipe Left / Right</text>
+    <text x="20" y="90" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="12">Glide Desktop 1 → 4 in one swipe</text>
+    <text x="20" y="107" fill="#64748b" font-family="Segoe UI, sans-serif" font-size="11">(60fps Fluent OSD on primary monitor)</text>
 
     <text x="20" y="145" fill="#bb9af7" font-family="Segoe UI, sans-serif" font-size="12.5" font-weight="700">Swipe Up / Down</text>
     <text x="20" y="163" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="12">Matches the 3-State Task View /</text>

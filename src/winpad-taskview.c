@@ -206,7 +206,7 @@ static cairo_surface_t *capture_window_thumb(WnckWindow *win) {
     cairo_translate(cr, ox, oy);
     cairo_scale(cr, sc, sc);
     cairo_set_source_surface(cr, src, 0.0, 0.0);
-    cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
+    cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_GOOD);
     cairo_paint(cr);
 
     cairo_destroy(cr);
@@ -469,12 +469,13 @@ static gboolean on_sigusr1_poll(gpointer user_data) {
 static gboolean on_fade_tick(gpointer user_data) {
     (void)user_data;
     if (!g_window) return FALSE;
-    g_fade_alpha += 0.22;
+    g_fade_alpha += 0.25;
     if (g_fade_alpha >= 1.0) {
         gtk_widget_set_opacity(g_window, 1.0);
         return FALSE;
     }
-    gtk_widget_set_opacity(g_window, g_fade_alpha);
+    double eased = 1.0 - pow(1.0 - g_fade_alpha, 3.0);
+    gtk_widget_set_opacity(g_window, eased);
     return TRUE;
 }
 
@@ -561,6 +562,7 @@ static void apply_css(void) {
         ".tv-card    { background: rgba(25, 29, 41, 0.92); border-radius: 14px;\n"
         "              border: 1px solid rgba(255, 255, 255, 0.12); padding: 10px; }\n"
         ".tv-card-active { border: 2px solid #7aa2f7; background: rgba(33, 40, 58, 0.96); }\n"
+        "flowboxchild { outline-style: none; }\n"
         "flowboxchild:selected .tv-card, flowboxchild:focus .tv-card {\n"
         "              border: 2px solid #bb9af7; background: rgba(38, 45, 66, 0.98); }\n"
         ".tv-card:hover { border-color: #7dcfff; background: rgba(35, 42, 60, 0.98); }\n"
@@ -821,22 +823,38 @@ int main(int argc, char **argv) {
             gtk_widget_set_size_request(btn, 165, 62);
             gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tv-desk-card");
 
-            GtkWidget *dbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+            GtkWidget *dbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
             gtk_widget_set_valign(dbox, GTK_ALIGN_CENTER);
             char dname[32], dmeta[48];
             snprintf(dname, sizeof(dname), "Desktop %d", i + 1);
             if (ws_counts[i] == 0)
                 snprintf(dmeta, sizeof(dmeta), "Empty");
             else
-                snprintf(dmeta, sizeof(dmeta), "%d open window%s", ws_counts[i], ws_counts[i] == 1 ? "" : "s");
+                snprintf(dmeta, sizeof(dmeta), "%d window%s", ws_counts[i], ws_counts[i] == 1 ? "" : "s");
 
+            GtkWidget *top_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
             GtkWidget *nl = gtk_label_new(dname);
             gtk_label_set_xalign(GTK_LABEL(nl), 0.0f);
             gtk_style_context_add_class(gtk_widget_get_style_context(nl), "tv-desk-name");
+            gtk_box_pack_start(GTK_BOX(top_row), nl, TRUE, TRUE, 0);
+
+            /* Visual mini-window dots on each desktop card */
+            int dots = ws_counts[i] > 4 ? 4 : ws_counts[i];
+            if (dots > 0) {
+                GtkWidget *dot_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
+                gtk_widget_set_valign(dot_box, GTK_ALIGN_CENTER);
+                for (int d = 0; d < dots; d++) {
+                    GtkWidget *dot = gtk_label_new("●");
+                    gtk_style_context_add_class(gtk_widget_get_style_context(dot), "tv-badge");
+                    gtk_box_pack_start(GTK_BOX(dot_box), dot, FALSE, FALSE, 0);
+                }
+                gtk_box_pack_end(GTK_BOX(top_row), dot_box, FALSE, FALSE, 0);
+            }
+
             GtkWidget *ml = gtk_label_new(dmeta);
             gtk_label_set_xalign(GTK_LABEL(ml), 0.0f);
             gtk_style_context_add_class(gtk_widget_get_style_context(ml), "tv-desk-meta");
-            gtk_box_pack_start(GTK_BOX(dbox), nl, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(dbox), top_row, FALSE, FALSE, 0);
             gtk_box_pack_start(GTK_BOX(dbox), ml, FALSE, FALSE, 0);
             gtk_container_add(GTK_CONTAINER(btn), dbox);
 

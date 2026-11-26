@@ -28,22 +28,24 @@
 #include <X11/keysym.h>
 #include <X11/XF86keysym.h>
 
-#define WINPAD_VERSION "1.2.0"
+#define WINPAD_VERSION "1.3.0"
 #define MAX_SLOTS 16
 #define ALT_WATCHDOG_MS 15000L
-#define THREE_F_SETTLE_MS 32L
+#define THREE_F_SETTLE_MS 20L
+#define LANDING_MERGE_MS 55L
 #define DROP_HYSTERESIS_MS 45L
-#define OSD_DURATION_MS 750L
-#define OSD_W 268
-#define OSD_H 74
+#define OSD_DURATION_MS 820L
+#define OSD_FADE_MS 140L
+#define OSD_W 316
+#define OSD_H 84
 #define BITS_PER_LONG (8 * sizeof(unsigned long))
 #define NBITS(x) ((((x) - 1) / BITS_PER_LONG) + 1)
 #define TEST_BIT(bit, arr) (((arr)[(bit) / BITS_PER_LONG] >> ((bit) % BITS_PER_LONG)) & 1UL)
 
 typedef enum {
     TWO_F_OFF = 0,
-    TWO_F_NATURAL = 1, /* swipe right -> Back, swipe left -> Forward (Windows Edge / macOS) */
-    TWO_F_ARROW = 2    /* swipe left -> Back, swipe right -> Forward */
+    TWO_F_NATURAL = 1,
+    TWO_F_ARROW = 2
 } TwoFingerMode;
 
 typedef enum {
@@ -54,8 +56,8 @@ typedef enum {
 
 typedef enum {
     FOUR_H_OFF = 0,
-    FOUR_H_WORKSPACE_DIRECT = 1,  /* Windows default: swipe right -> next desktop, swipe left -> prev */
-    FOUR_H_WORKSPACE_NATURAL = 2, /* swipe left -> next desktop, swipe right -> prev */
+    FOUR_H_WORKSPACE_DIRECT = 1,
+    FOUR_H_WORKSPACE_NATURAL = 2,
     FOUR_H_ALTTAB = 3
 } FourHorizMode;
 
@@ -66,12 +68,13 @@ typedef struct {
     double two_f_min_mm;
     long two_f_max_ms;
     ThreeHorizMode three_h_mode;
-    int three_h_invert; /* 0 = direct (right=next/Tab, left=prev/Shift+Tab), 1 = natural */
+    int three_h_invert;
     double three_h_thresh_mm;
     double three_h_step_mm;
     double three_v_thresh_mm;
     FourHorizMode four_h_mode;
     double four_h_thresh_mm;
+    double four_h_step_mm;
     double four_v_thresh_mm;
 } Config;
 
@@ -93,11 +96,17 @@ static int g_debug = 0;
 static int g_alt_held = 0;
 static long g_alt_held_since = 0;
 
+/* Animated Fluent Desktop OSD state */
 static Window g_osd_win = None;
 static Colormap g_osd_cmap = None;
 static Visual *g_osd_visual = NULL;
 static int g_osd_argb = 0;
+static int g_osd_visible = 0;
+static long g_osd_shown_at = 0;
 static long g_osd_hide_at = 0;
+static long g_osd_total = 4;
+static long g_osd_target_idx = 0;
+static double g_osd_anim_pos = 0.0;
 
 static KeyCode g_kc_alt = 0;
 static KeyCode g_kc_shift = 0;
@@ -136,9 +145,10 @@ static void on_signal(int sig) {
 }
 
 static void hide_osd(void) {
-    if (g_osd_win != None && g_dpy) {
+    if (g_osd_win != None && g_dpy && g_osd_visible) {
         XUnmapWindow(g_dpy, g_osd_win);
         XFlush(g_dpy);
+        g_osd_visible = 0;
         g_osd_hide_at = 0;
     }
 }
@@ -187,16 +197,17 @@ static void load_config(void) {
     snprintf(g_cfg.device, sizeof(g_cfg.device), "auto");
     expand_home("~/.local/bin/winpad-taskview", g_cfg.taskview_cmd, sizeof(g_cfg.taskview_cmd));
     g_cfg.two_f_mode = TWO_F_NATURAL;
-    g_cfg.two_f_min_mm = 16.0;
-    g_cfg.two_f_max_ms = 380;
+    g_cfg.two_f_min_mm = 14.0;
+    g_cfg.two_f_max_ms = 360;
     g_cfg.three_h_mode = THREE_H_SCRUB;
     g_cfg.three_h_invert = 0;
-    g_cfg.three_h_thresh_mm = 8.5;
-    g_cfg.three_h_step_mm = 14.0;
-    g_cfg.three_v_thresh_mm = 9.5;
+    g_cfg.three_h_thresh_mm = 6.5;
+    g_cfg.three_h_step_mm = 11.5;
+    g_cfg.three_v_thresh_mm = 7.5;
     g_cfg.four_h_mode = FOUR_H_WORKSPACE_DIRECT;
-    g_cfg.four_h_thresh_mm = 10.0;
-    g_cfg.four_v_thresh_mm = 10.0;
+    g_cfg.four_h_thresh_mm = 7.5;
+    g_cfg.four_h_step_mm = 15.0;
+    g_cfg.four_v_thresh_mm = 8.0;
 
     char path[512];
     expand_home("~/.config/winpad-gestures.conf", path, sizeof(path));
@@ -239,13 +250,13 @@ static void load_config(void) {
             g_cfg.three_h_invert = (strcmp(v, "natural") == 0) ? 1 : 0;
         } else if (strcmp(k, "three_finger_thresh_mm") == 0) {
             double val = atof(v);
-            if (val >= 4.0 && val <= 80.0) g_cfg.three_h_thresh_mm = val;
+            if (val >= 3.0 && val <= 80.0) g_cfg.three_h_thresh_mm = val;
         } else if (strcmp(k, "three_finger_v_thresh_mm") == 0) {
             double val = atof(v);
-            if (val >= 4.0 && val <= 80.0) g_cfg.three_v_thresh_mm = val;
+            if (val >= 3.0 && val <= 80.0) g_cfg.three_v_thresh_mm = val;
         } else if (strcmp(k, "three_finger_step_mm") == 0) {
             double val = atof(v);
-            if (val >= 6.0 && val <= 80.0) g_cfg.three_h_step_mm = val;
+            if (val >= 5.0 && val <= 80.0) g_cfg.three_h_step_mm = val;
         } else if (strcmp(k, "four_finger_horiz") == 0) {
             if (strcmp(v, "off") == 0) g_cfg.four_h_mode = FOUR_H_OFF;
             else if (strcmp(v, "workspace_natural") == 0) g_cfg.four_h_mode = FOUR_H_WORKSPACE_NATURAL;
@@ -253,10 +264,13 @@ static void load_config(void) {
             else g_cfg.four_h_mode = FOUR_H_WORKSPACE_DIRECT;
         } else if (strcmp(k, "four_finger_thresh_mm") == 0) {
             double val = atof(v);
-            if (val >= 4.0 && val <= 80.0) {
+            if (val >= 3.0 && val <= 80.0) {
                 g_cfg.four_h_thresh_mm = val;
-                g_cfg.four_v_thresh_mm = val;
+                g_cfg.four_v_thresh_mm = val + 0.5;
             }
+        } else if (strcmp(k, "four_finger_step_mm") == 0) {
+            double val = atof(v);
+            if (val >= 6.0 && val <= 80.0) g_cfg.four_h_step_mm = val;
         }
     }
     fclose(f);
@@ -275,7 +289,6 @@ static int is_touchpad_fd(int fd, int *out_max_fingers, double *res_x, double *r
     if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keybits)), keybits) < 0) return 0;
     ioctl(fd, EVIOCGPROP(sizeof(propbits)), propbits);
 
-    /* Ignore direct touchscreens. */
     if (TEST_BIT(INPUT_PROP_DIRECT, propbits)) return 0;
 
     if (!TEST_BIT(ABS_MT_POSITION_X, absbits) || !TEST_BIT(ABS_MT_POSITION_Y, absbits))
@@ -483,16 +496,23 @@ static void rounded_rect(cairo_t *cr, double x, double y, double w, double h, do
     cairo_close_path(cr);
 }
 
-static void show_desktop_osd(long cur_idx, long total) {
-    if (g_osd_win == None || !g_dpy) return;
+static void render_osd_frame(long tnow) {
+    if (g_osd_win == None || !g_dpy || !g_osd_visible) return;
 
-    int mx = 0, my = 0, mw = 1920, mh = 1080;
-    get_primary_monitor_rect(&mx, &my, &mw, &mh);
-    int x = mx + (mw - OSD_W) / 2;
-    int y = my + mh - OSD_H - 72;
+    /* Smooth glide towards target index + fade-in / fade-out */
+    g_osd_anim_pos += ((double)g_osd_target_idx - g_osd_anim_pos) * 0.42;
+    if (fabs((double)g_osd_target_idx - g_osd_anim_pos) < 0.015)
+        g_osd_anim_pos = (double)g_osd_target_idx;
 
-    XMoveResizeWindow(g_dpy, g_osd_win, x, y, OSD_W, OSD_H);
-    XMapRaised(g_dpy, g_osd_win);
+    double alpha = 1.0;
+    if (g_osd_argb) {
+        long dt_in = tnow - g_osd_shown_at;
+        long dt_rem = g_osd_hide_at - tnow;
+        if (dt_in < 70) alpha = 0.35 + 0.65 * ((double)dt_in / 70.0);
+        if (dt_rem < OSD_FADE_MS) alpha *= (double)(dt_rem > 0 ? dt_rem : 0) / (double)OSD_FADE_MS;
+        if (alpha < 0.0) alpha = 0.0;
+        if (alpha > 1.0) alpha = 1.0;
+    }
 
     cairo_surface_t *surf = cairo_xlib_surface_create(g_dpy, g_osd_win, g_osd_visual, OSD_W, OSD_H);
     cairo_t *cr = cairo_create(surf);
@@ -504,86 +524,121 @@ static void show_desktop_osd(long cur_idx, long total) {
         cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
     }
 
-    double radius = g_osd_argb ? 18.0 : 0.0;
+    double radius = g_osd_argb ? 20.0 : 0.0;
     rounded_rect(cr, 1.0, 1.0, OSD_W - 2.0, OSD_H - 2.0, radius);
     cairo_pattern_t *bg = cairo_pattern_create_linear(0, 0, OSD_W, OSD_H);
-    cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.085, 0.105, 0.165, 0.93);
-    cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.060, 0.075, 0.125, 0.95);
+    cairo_pattern_add_color_stop_rgba(bg, 0.0, 0.078, 0.098, 0.155, 0.94 * alpha);
+    cairo_pattern_add_color_stop_rgba(bg, 1.0, 0.055, 0.068, 0.115, 0.96 * alpha);
     cairo_set_source(cr, bg);
     cairo_fill_preserve(cr);
     cairo_pattern_destroy(bg);
 
-    /* Subtle glowing border */
-    cairo_set_source_rgba(cr, 0.478, 0.635, 0.969, 0.52);
+    /* Outer border glow */
+    cairo_pattern_t *brd = cairo_pattern_create_linear(0, 0, OSD_W, 0);
+    cairo_pattern_add_color_stop_rgba(brd, 0.0, 0.49, 0.81, 1.0, 0.50 * alpha);
+    cairo_pattern_add_color_stop_rgba(brd, 0.5, 0.48, 0.64, 0.97, 0.58 * alpha);
+    cairo_pattern_add_color_stop_rgba(brd, 1.0, 0.73, 0.60, 0.97, 0.50 * alpha);
+    cairo_set_source(cr, brd);
     cairo_set_line_width(cr, 1.4);
     cairo_stroke(cr);
+    cairo_pattern_destroy(brd);
 
-    /* Top inner sheen */
-    rounded_rect(cr, 2.5, 2.5, OSD_W - 5.0, OSD_H - 5.0, radius > 2.0 ? radius - 1.5 : 0.0);
-    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.07);
-    cairo_set_line_width(cr, 1.0);
-    cairo_stroke(cr);
-
-    /* Mini desktop emblem on left */
-    rounded_rect(cr, 20.0, 15.0, 26.0, 19.0, 4.5);
-    cairo_pattern_t *ico = cairo_pattern_create_linear(20.0, 15.0, 46.0, 34.0);
-    cairo_pattern_add_color_stop_rgb(ico, 0.0, 0.49, 0.81, 1.0);
-    cairo_pattern_add_color_stop_rgb(ico, 1.0, 0.48, 0.64, 0.97);
-    cairo_set_source(cr, ico);
-    cairo_fill(cr);
-    cairo_pattern_destroy(ico);
-
-    rounded_rect(cr, 24.0, 19.0, 18.0, 11.0, 2.0);
-    cairo_set_source_rgba(cr, 0.07, 0.09, 0.14, 0.85);
-    cairo_fill(cr);
-
-    /* Crisp label: "Desktop X" + "of N" */
+    /* Header line: "Desktop X" + "of N" */
     char title[32], sub[16];
-    snprintf(title, sizeof(title), "Desktop %ld", cur_idx + 1);
-    snprintf(sub, sizeof(sub), "of %ld", total);
+    snprintf(title, sizeof(title), "Desktop %ld", g_osd_target_idx + 1);
+    snprintf(sub, sizeof(sub), "/ %ld", g_osd_total);
 
     cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
-    cairo_set_font_size(cr, 15.5);
-    cairo_text_extents_t te;
+    cairo_set_font_size(cr, 14.5);
+    cairo_text_extents_t te, se;
     cairo_text_extents(cr, title, &te);
-    cairo_set_source_rgb(cr, 0.96, 0.97, 1.0);
-    cairo_move_to(cr, 56.0, 30.0);
+    cairo_set_font_size(cr, 12.0);
+    cairo_text_extents(cr, sub, &se);
+
+    double hdr_w = te.x_advance + 6.0 + se.x_advance;
+    double hx = (OSD_W - hdr_w) * 0.5;
+    cairo_set_font_size(cr, 14.5);
+    cairo_set_source_rgba(cr, 0.96, 0.97, 1.0, alpha);
+    cairo_move_to(cr, hx, 26.0);
     cairo_show_text(cr, title);
 
     cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-    cairo_set_font_size(cr, 12.5);
-    cairo_set_source_rgba(cr, 0.62, 0.68, 0.80, 0.90);
-    cairo_move_to(cr, 56.0 + te.x_advance + 8.0, 30.0);
+    cairo_set_font_size(cr, 12.0);
+    cairo_set_source_rgba(cr, 0.62, 0.70, 0.84, 0.90 * alpha);
+    cairo_move_to(cr, hx + te.x_advance + 6.0, 26.0);
     cairo_show_text(cr, sub);
 
-    /* Sleek capsule indicator bar centered at bottom of pill */
-    int dots = (int)(total > 8 ? 8 : total);
-    double active_w = 30.0, idle_w = 12.0, dot_h = 6.0, gap = 8.0;
-    double bar_w = (dots - 1) * idle_w + active_w + (dots - 1) * gap;
-    double px = (OSD_W - bar_w) * 0.5;
-    double py = 50.0;
+    /* Mini desktop screen tiles + sliding glowing selector */
+    int tiles = (int)(g_osd_total > 6 ? 6 : g_osd_total);
+    double tile_w = 54.0, tile_h = 28.0, gap = 10.0;
+    double row_w = tiles * tile_w + (tiles - 1) * gap;
+    double sx = (OSD_W - row_w) * 0.5;
+    double sy = 39.0;
 
-    for (int i = 0; i < dots; i++) {
-        double dw = (i == cur_idx) ? active_w : idle_w;
-        rounded_rect(cr, px, py, dw, dot_h, 3.0);
-        if (i == cur_idx) {
-            cairo_pattern_t *act = cairo_pattern_create_linear(px, py, px + dw, py);
-            cairo_pattern_add_color_stop_rgb(act, 0.0, 0.49, 0.81, 1.0);
-            cairo_pattern_add_color_stop_rgb(act, 1.0, 0.73, 0.60, 0.97);
-            cairo_set_source(cr, act);
-            cairo_fill(cr);
-            cairo_pattern_destroy(act);
-        } else {
-            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.16);
-            cairo_fill(cr);
-        }
-        px += dw + gap;
+    for (int i = 0; i < tiles; i++) {
+        double tx = sx + i * (tile_w + gap);
+        rounded_rect(cr, tx, sy, tile_w, tile_h, 7.0);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, (i == g_osd_target_idx ? 0.14 : 0.06) * alpha);
+        cairo_fill_preserve(cr);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.10 * alpha);
+        cairo_set_line_width(cr, 1.0);
+        cairo_stroke(cr);
+
+        char nbuf[8];
+        snprintf(nbuf, sizeof(nbuf), "%d", i + 1);
+        cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_font_size(cr, 11.5);
+        cairo_text_extents_t ne;
+        cairo_text_extents(cr, nbuf, &ne);
+        cairo_set_source_rgba(cr, 0.85, 0.90, 1.0, (i == g_osd_target_idx ? 0.98 : 0.45) * alpha);
+        cairo_move_to(cr, tx + (tile_w - ne.width) * 0.5 - ne.x_bearing,
+                      sy + (tile_h + ne.height) * 0.5);
+        cairo_show_text(cr, nbuf);
     }
+
+    /* Smooth sliding glowing frame over active tile */
+    double sel_x = sx + g_osd_anim_pos * (tile_w + gap);
+    rounded_rect(cr, sel_x, sy, tile_w, tile_h, 7.0);
+    cairo_pattern_t *sel_fill = cairo_pattern_create_linear(sel_x, sy, sel_x + tile_w, sy + tile_h);
+    cairo_pattern_add_color_stop_rgba(sel_fill, 0.0, 0.49, 0.81, 1.0, 0.22 * alpha);
+    cairo_pattern_add_color_stop_rgba(sel_fill, 1.0, 0.73, 0.60, 0.97, 0.22 * alpha);
+    cairo_set_source(cr, sel_fill);
+    cairo_fill_preserve(cr);
+    cairo_pattern_destroy(sel_fill);
+
+    cairo_pattern_t *sel_brd = cairo_pattern_create_linear(sel_x, sy, sel_x + tile_w, sy);
+    cairo_pattern_add_color_stop_rgba(sel_brd, 0.0, 0.49, 0.81, 1.0, 0.95 * alpha);
+    cairo_pattern_add_color_stop_rgba(sel_brd, 1.0, 0.73, 0.60, 0.97, 0.95 * alpha);
+    cairo_set_source(cr, sel_brd);
+    cairo_set_line_width(cr, 2.0);
+    cairo_stroke(cr);
+    cairo_pattern_destroy(sel_brd);
 
     cairo_destroy(cr);
     cairo_surface_destroy(surf);
     XFlush(g_dpy);
-    g_osd_hide_at = now_ms() + OSD_DURATION_MS;
+}
+
+static void show_desktop_osd(long prev_idx, long cur_idx, long total) {
+    if (g_osd_win == None || !g_dpy) return;
+    long tnow = now_ms();
+
+    if (!g_osd_visible) {
+        int mx = 0, my = 0, mw = 1920, mh = 1080;
+        get_primary_monitor_rect(&mx, &my, &mw, &mh);
+        int x = mx + (mw - OSD_W) / 2;
+        int y = my + mh - OSD_H - 72;
+        XMoveResizeWindow(g_dpy, g_osd_win, x, y, OSD_W, OSD_H);
+        XMapRaised(g_dpy, g_osd_win);
+        g_osd_visible = 1;
+        g_osd_shown_at = tnow;
+        g_osd_anim_pos = (double)prev_idx;
+    }
+
+    g_osd_total = total;
+    g_osd_target_idx = cur_idx;
+    g_osd_hide_at = tnow + OSD_DURATION_MS;
+    render_osd_frame(tnow);
 }
 
 static void send_key_combo(KeyCode mod, KeyCode key) {
@@ -717,10 +772,10 @@ static int switch_workspace(int delta) {
         if (tv > 0)
             kill(tv, SIGUSR1);
         else
-            show_desktop_osd(target, count);
+            show_desktop_osd(cur, target, count);
     } else {
         if (get_taskview_pid() == 0)
-            show_desktop_osd(cur, count);
+            show_desktop_osd(cur, cur, count);
     }
     return 1;
 }
@@ -823,19 +878,21 @@ static void reap_children(void) {
 }
 
 static void evaluate_three_finger_gesture(double res_x, double res_y, double accum_x, double accum_y,
-                                          double *step_anchor_x, int *gesture_fired, long tnow) {
+                                          double *step_anchor_x, int *gesture_fired,
+                                          int *three_tv_scrub, long tnow) {
     double dx_mm = accum_x / res_x;
     double dy_mm = accum_y / res_y;
     double adx = fabs(dx_mm);
     double ady = fabs(dy_mm);
 
     if (g_cfg.three_h_mode != THREE_H_OFF &&
-        adx >= g_cfg.three_h_thresh_mm && adx > 1.35 * ady) {
+        adx >= g_cfg.three_h_thresh_mm && adx > 1.30 * ady) {
         int dir_right = (dx_mm > 0.0);
         int forward = g_cfg.three_h_invert ? !dir_right : dir_right;
         if (get_taskview_pid() > 0) {
             send_key_combo(0, forward ? g_kc_right : g_kc_left);
-            *gesture_fired = 1;
+            *three_tv_scrub = 1;
+            *step_anchor_x = accum_x;
         } else if (g_cfg.three_h_mode == THREE_H_SCRUB) {
             XTestFakeKeyEvent(g_dpy, g_kc_alt, True, CurrentTime);
             XFlush(g_dpy);
@@ -848,10 +905,10 @@ static void evaluate_three_finger_gesture(double res_x, double res_y, double acc
             send_alt_tab_once(dir_right);
             *gesture_fired = 1;
         }
-    } else if (-dy_mm >= g_cfg.three_v_thresh_mm && ady > 1.35 * adx) {
+    } else if (-dy_mm >= g_cfg.three_v_thresh_mm && ady > 1.30 * adx) {
         *gesture_fired = 1;
         handle_vertical_gesture(1);
-    } else if (dy_mm >= g_cfg.three_v_thresh_mm && ady > 1.35 * adx) {
+    } else if (dy_mm >= g_cfg.three_v_thresh_mm && ady > 1.30 * adx) {
         *gesture_fired = 1;
         handle_vertical_gesture(0);
     }
@@ -892,8 +949,11 @@ int main(int argc, char **argv) {
         int mx = 0, my = 0, mw = 0, mh = 0;
         get_primary_monitor_rect(&mx, &my, &mw, &mh);
         printf("OSD_PRIMARY_MONITOR x=%d y=%d w=%d h=%d argb=%d\n", mx, my, mw, mh, g_osd_argb);
-        show_desktop_osd(1, 4);
-        usleep(400000);
+        show_desktop_osd(0, 2, 4);
+        for (int f = 0; f < 18; f++) {
+            usleep(16000);
+            render_osd_frame(now_ms());
+        }
         hide_osd();
         cleanup_all();
         return 0;
@@ -972,11 +1032,14 @@ int main(int argc, char **argv) {
         unsigned int tool_mask = 0;
         int mode_fingers = 0;
         int peak_fingers = 0;
+        long touch_start_ms = 0;
         long drop_pending_since = 0;
         double accum_x = 0.0, accum_y = 0.0;
         double step_anchor_x = 0.0;
         long gesture_start_ms = 0;
         int gesture_fired = 0;
+        int three_tv_scrub = 0;
+        int four_ws_scrub = 0;
         int two_f_scroll_locked = 0;
         int two_f_triggered = 0;
 
@@ -987,13 +1050,17 @@ int main(int argc, char **argv) {
             }
 
             long tnow_loop = now_ms();
-            if (g_osd_hide_at > 0 && tnow_loop >= g_osd_hide_at)
-                hide_osd();
+            if (g_osd_visible) {
+                if (tnow_loop >= g_osd_hide_at)
+                    hide_osd();
+                else
+                    render_osd_frame(tnow_loop);
+            }
 
             int timeout_ms = 1000;
-            if (g_alt_held && drop_pending_since > 0) timeout_ms = 25;
-            else if (mode_fingers == 3 && !gesture_fired && !g_alt_held) timeout_ms = 20;
-            else if (g_osd_hide_at > 0) timeout_ms = 50;
+            if (g_osd_visible) timeout_ms = 16; /* 60fps smooth OSD animation while visible */
+            else if (g_alt_held && drop_pending_since > 0) timeout_ms = 20;
+            else if (mode_fingers == 3 && !gesture_fired && !g_alt_held && !three_tv_scrub) timeout_ms = 12;
 
             struct pollfd pfd = { .fd = fd, .events = POLLIN, .revents = 0 };
             int pr = poll(&pfd, 1, timeout_ms);
@@ -1003,12 +1070,15 @@ int main(int argc, char **argv) {
             }
             if (pr == 0) {
                 long tnow = now_ms();
-                if (g_osd_hide_at > 0 && tnow >= g_osd_hide_at)
-                    hide_osd();
-                if (mode_fingers == 3 && !gesture_fired && !g_alt_held &&
+                if (g_osd_visible) {
+                    if (tnow >= g_osd_hide_at) hide_osd();
+                    else render_osd_frame(tnow);
+                }
+                if (mode_fingers == 3 && !gesture_fired && !g_alt_held && !three_tv_scrub &&
                     drop_pending_since == 0 && (tnow - gesture_start_ms) >= THREE_F_SETTLE_MS) {
                     evaluate_three_finger_gesture(res_x, res_y, accum_x, accum_y,
-                                                  &step_anchor_x, &gesture_fired, tnow);
+                                                  &step_anchor_x, &gesture_fired,
+                                                  &three_tv_scrub, tnow);
                 }
                 if (drop_pending_since > 0 && (tnow - drop_pending_since) >= DROP_HYSTERESIS_MS) {
                     release_alt_if_held();
@@ -1091,28 +1161,39 @@ int main(int argc, char **argv) {
                         release_alt_if_held();
                         mode_fingers = 0;
                         peak_fingers = 0;
+                        touch_start_ms = 0;
                         drop_pending_since = 0;
                         accum_x = accum_y = 0.0;
                         step_anchor_x = 0.0;
                         gesture_fired = 0;
+                        three_tv_scrub = 0;
+                        four_ws_scrub = 0;
                         two_f_scroll_locked = 0;
                         two_f_triggered = 0;
                         gesture_start_ms = 0;
                         continue;
                     }
 
+                    if (touch_start_ms == 0)
+                        touch_start_ms = tnow;
+
                     if (fingers > peak_fingers)
                         peak_fingers = fingers;
 
-                    /* Finger count transitions with 45ms downward-bounce hysteresis */
+                    /* Preserve fast initial flick momentum during rapid finger landing (<55ms) */
                     if (fingers > mode_fingers) {
                         if (g_alt_held)
                             release_alt_if_held();
+                        int fast_landing = (mode_fingers > 0 && (tnow - touch_start_ms) <= LANDING_MERGE_MS && fingers >= 3);
                         mode_fingers = fingers;
                         drop_pending_since = 0;
-                        accum_x = accum_y = 0.0;
-                        step_anchor_x = 0.0;
+                        if (!fast_landing) {
+                            accum_x = accum_y = 0.0;
+                            step_anchor_x = 0.0;
+                        }
                         gesture_fired = 0;
+                        three_tv_scrub = 0;
+                        four_ws_scrub = 0;
                         gesture_start_ms = tnow;
                     } else if (fingers < mode_fingers) {
                         if (mode_fingers >= 3) {
@@ -1126,6 +1207,8 @@ int main(int argc, char **argv) {
                                 accum_x = accum_y = 0.0;
                                 step_anchor_x = 0.0;
                                 gesture_fired = 0;
+                                three_tv_scrub = 0;
+                                four_ws_scrub = 0;
                                 gesture_start_ms = tnow;
                             }
                         } else {
@@ -1149,7 +1232,7 @@ int main(int argc, char **argv) {
                     double adx = fabs(dx_mm);
                     double ady = fabs(dy_mm);
 
-                    /* 2-finger horizontal flick -> Back / Forward (guarded against scroll) */
+                    /* 2-finger horizontal flick -> Back / Forward */
                     if (mode_fingers == 2 && peak_fingers == 2 && g_cfg.two_f_mode != TWO_F_OFF &&
                         !two_f_scroll_locked && !two_f_triggered) {
                         if (ady >= 5.5) {
@@ -1160,7 +1243,6 @@ int main(int argc, char **argv) {
                                 two_f_triggered = 1;
                                 int is_right = (dx_mm > 0.0);
                                 int is_back = (g_cfg.two_f_mode == TWO_F_NATURAL) ? is_right : !is_right;
-                                if (g_debug) fprintf(stderr, "DEBUG: 2F %s\n", is_back ? "Back" : "Forward");
                                 trigger_back_forward(is_back);
                             } else {
                                 two_f_scroll_locked = 1;
@@ -1168,7 +1250,7 @@ int main(int argc, char **argv) {
                         }
                     }
 
-                    /* 3-finger gestures -> Alt+Tab scrub (L/R), Windows state cycle (Up/Down) */
+                    /* 3-finger gestures -> continuous Alt+Tab / Task View scrub + 3-state Up/Down */
                     else if (mode_fingers == 3) {
                         if (g_alt_held) {
                             double step_dx_mm = (accum_x - step_anchor_x) / res_x;
@@ -1181,33 +1263,61 @@ int main(int argc, char **argv) {
                                 else send_shift_tab_with_alt_held();
                                 step_anchor_x = accum_x;
                             }
+                        } else if (three_tv_scrub) {
+                            double step_dx_mm = (accum_x - step_anchor_x) / res_x;
+                            if (step_dx_mm >= g_cfg.three_h_step_mm) {
+                                send_key_combo(0, g_cfg.three_h_invert ? g_kc_left : g_kc_right);
+                                step_anchor_x = accum_x;
+                            } else if (step_dx_mm <= -g_cfg.three_h_step_mm) {
+                                send_key_combo(0, g_cfg.three_h_invert ? g_kc_right : g_kc_left);
+                                step_anchor_x = accum_x;
+                            }
                         } else if (!gesture_fired && (tnow - gesture_start_ms) >= THREE_F_SETTLE_MS) {
                             evaluate_three_finger_gesture(res_x, res_y, accum_x, accum_y,
-                                                          &step_anchor_x, &gesture_fired, tnow);
+                                                          &step_anchor_x, &gesture_fired,
+                                                          &three_tv_scrub, tnow);
                         }
                     }
 
-                    /* 4-finger gestures -> Switch Virtual Desktop (L/R), Windows state cycle (Up/Down) */
-                    else if (mode_fingers == 4 && !gesture_fired) {
-                        if (g_cfg.four_h_mode != FOUR_H_OFF &&
-                            adx >= g_cfg.four_h_thresh_mm && adx > 1.35 * ady) {
-                            gesture_fired = 1;
-                            int dir_right = (dx_mm > 0.0);
-                            if (g_cfg.four_h_mode == FOUR_H_ALTTAB) {
-                                send_alt_tab_once(dir_right);
-                            } else {
-                                int delta = (g_cfg.four_h_mode == FOUR_H_WORKSPACE_NATURAL)
-                                                ? (dir_right ? -1 : 1)
-                                                : (dir_right ? 1 : -1);
-                                if (!switch_workspace(delta))
-                                    send_alt_tab_once(dir_right);
+                    /* 4-finger gestures -> continuous multi-desktop scrub + 3-state Up/Down */
+                    else if (mode_fingers == 4) {
+                        if (four_ws_scrub) {
+                            double step_dx_mm = (accum_x - step_anchor_x) / res_x;
+                            if (step_dx_mm >= g_cfg.four_h_step_mm) {
+                                int delta = (g_cfg.four_h_mode == FOUR_H_WORKSPACE_NATURAL) ? -1 : 1;
+                                switch_workspace(delta);
+                                step_anchor_x = accum_x;
+                            } else if (step_dx_mm <= -g_cfg.four_h_step_mm) {
+                                int delta = (g_cfg.four_h_mode == FOUR_H_WORKSPACE_NATURAL) ? 1 : -1;
+                                switch_workspace(delta);
+                                step_anchor_x = accum_x;
                             }
-                        } else if (-dy_mm >= g_cfg.four_v_thresh_mm && ady > 1.35 * adx) {
-                            gesture_fired = 1;
-                            handle_vertical_gesture(1);
-                        } else if (dy_mm >= g_cfg.four_v_thresh_mm && ady > 1.35 * adx) {
-                            gesture_fired = 1;
-                            handle_vertical_gesture(0);
+                        } else if (!gesture_fired) {
+                            if (g_cfg.four_h_mode != FOUR_H_OFF &&
+                                adx >= g_cfg.four_h_thresh_mm && adx > 1.30 * ady) {
+                                int dir_right = (dx_mm > 0.0);
+                                if (g_cfg.four_h_mode == FOUR_H_ALTTAB) {
+                                    gesture_fired = 1;
+                                    send_alt_tab_once(dir_right);
+                                } else {
+                                    int delta = (g_cfg.four_h_mode == FOUR_H_WORKSPACE_NATURAL)
+                                                    ? (dir_right ? -1 : 1)
+                                                    : (dir_right ? 1 : -1);
+                                    if (switch_workspace(delta)) {
+                                        four_ws_scrub = 1;
+                                        step_anchor_x = accum_x;
+                                    } else {
+                                        gesture_fired = 1;
+                                        send_alt_tab_once(dir_right);
+                                    }
+                                }
+                            } else if (-dy_mm >= g_cfg.four_v_thresh_mm && ady > 1.30 * adx) {
+                                gesture_fired = 1;
+                                handle_vertical_gesture(1);
+                            } else if (dy_mm >= g_cfg.four_v_thresh_mm && ady > 1.30 * adx) {
+                                gesture_fired = 1;
+                                handle_vertical_gesture(0);
+                            }
                         }
                     }
                 }

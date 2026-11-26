@@ -56,8 +56,9 @@ Unlike simple toggle scripts, 3-finger & 4-finger vertical swipes follow the exa
 - **Task View open → Swipe Down:** Closes Task View back to your windows
 
 ### Smart Responsiveness & Anti-Misfire Guards
-- **32 ms 3-vs-4 finger settle + 45 ms bounce hysteresis:** Ensures rapid 4-finger swipes never misfire as 3-finger gestures during finger landing, and staggered finger liftoff never drops `Alt+Tab` mid-gesture.
-- **Task View aware navigation & Primary-monitor Fluent OSD:** When Task View is open, 3-finger Left/Right selects windows inside Task View and 4-finger Left/Right switches desktops live. Outside Task View, 4-finger desktop switching renders a translucent 32-bit ARGB Fluent pill on your **primary monitor** via XRandR (never split across dual-monitor gaps).
+- **Fast-landing merge & 45 ms bounce hysteresis:** Preserves rapid initial swipe momentum during multi-finger landing (`< 55 ms`), with a `20 ms` 3-vs-4 settle window and `45 ms` downward-bounce hysteresis so swipes feel instantaneous while staying misfire-proof.
+- **Continuous 3-finger & 4-finger scrubbing:** Slide once across the touchpad to scrub smoothly across **all `Alt+Tab` windows** (`3F`) or **all Virtual Desktops `D1 → D4`** (`4F`) in a single motion—complete with a 60fps sliding-glow **Primary-Monitor Fluent ARGB OSD** via XRandR + Cairo.
+- **Task View aware navigation:** When Task View is open, 3-finger Left/Right scrubs window cards inside Task View and 4-finger Left/Right scrubs desktops live.
 - **Terminal-safe 2-finger Back/Forward:** Checks active window `WM_CLASS` via X11—sends `XF86Back`/`XF86Forward` to browsers & file managers, `Alt+Left`/`Alt+Right` to IDEs, and stays silent in terminals.
 - **Scroll lock protection:** Vertical 2-finger scrolling locks out horizontal Back/Forward flicks (`> 5.5 mm` vertical motion), preventing accidental navigation while scrolling.
 - **XKB layout protection:** Saves and restores active XKB group via `XkbLockGroup` so `Alt+Shift+Tab` never accidentally flips multi-language layouts (e.g. `grp:alt_shift_toggle`).
@@ -129,19 +130,20 @@ device = auto
 
 # 2-finger horizontal flick: natural (right=Back, left=Forward) | arrow | off
 two_finger_swipe = natural
-two_finger_swipe_min_mm = 16
-two_finger_swipe_max_ms = 380
+two_finger_swipe_min_mm = 14
+two_finger_swipe_max_ms = 360
 
 # 3-finger horizontal swipe: alt_tab_scrub | alt_tab_once | off
 three_finger_horiz = alt_tab_scrub
 three_finger_direction = direct
-three_finger_thresh_mm = 8.5
-three_finger_step_mm = 14.0
-three_finger_v_thresh_mm = 9.5
+three_finger_thresh_mm = 6.5
+three_finger_step_mm = 11.5
+three_finger_v_thresh_mm = 7.5
 
 # 4-finger horizontal swipe: workspace_direct (Windows 11 default) | workspace_natural | alt_tab | off
 four_finger_horiz = workspace_direct
-four_finger_thresh_mm = 10.0
+four_finger_thresh_mm = 7.5
+four_finger_step_mm = 15.0
 
 # 3/4-finger Swipe Up command (can also swap for xfdashboard or rofi -show window)
 taskview_cmd = ~/.local/bin/winpad-taskview
