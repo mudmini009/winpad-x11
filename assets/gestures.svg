@@ -21,7 +21,7 @@
 
     <text x="20" y="184" fill="#7dcfff" font-family="Segoe UI, sans-serif" font-size="12.5" font-weight="700">Quick Flick Left / Right</text>
     <text x="20" y="202" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="12">Forward / Back in browsers &amp; files</text>
-    <text x="20" y="220" fill="#64748b" font-family="Segoe UI, sans-serif" font-size="11">(Auto-skips terminals &amp; vertical scroll)</text>
+    <text x="20" y="220" fill="#64748b" font-family="Segoe UI, sans-serif" font-size="11">(+ 1F Double-Tap Edge Drag Slide)</text>
   </g>
 
   <!-- Card 2: 3 Fingers -->
@@ -31,9 +31,9 @@
     <text x="26" y="33" text-anchor="middle" fill="#7aa2f7" font-family="Segoe UI, sans-serif" font-size="13" font-weight="800">3F</text>
     <text x="48" y="33" fill="#e2e8f0" font-family="Segoe UI, sans-serif" font-size="15" font-weight="700">Three Fingers</text>
 
-    <text x="20" y="72" fill="#7aa2f7" font-family="Segoe UI, sans-serif" font-size="12.5" font-weight="700">Swipe Left / Right</text>
-    <text x="20" y="90" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="12">Alt+Tab scrub (stops cleanly at ends)</text>
-    <text x="20" y="107" fill="#64748b" font-family="Segoe UI, sans-serif" font-size="11">(No wraparound + XKB layout safe)</text>
+    <text x="20" y="68" fill="#7aa2f7" font-family="Segoe UI, sans-serif" font-size="12.5" font-weight="700">Tap  •  Swipe Left / Right</text>
+    <text x="20" y="86" fill="#94a3b8" font-family="Segoe UI, sans-serif" font-size="12">Tap = Super/Search  •  Slide = Alt+Tab</text>
+    <text x="20" y="103" fill="#64748b" font-family="Segoe UI, sans-serif" font-size="11">(Clamped at ends + XKB layout safe)</text>
 
     <text x="20" y="144" fill="#7aa2f7" font-family="Segoe UI, sans-serif" font-size="12.5" font-weight="700">Windows 3-State Up / Down</text>
     <rect x="20" y="156" width="228" height="78" rx="8" fill="#0f1420" stroke="#ffffff" stroke-opacity="0.07"/>

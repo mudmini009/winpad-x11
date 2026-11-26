@@ -4,6 +4,10 @@ All notable changes to `winpad-x11` are documented in this file.
 
 ## [1.4.0] - 2026-11-26
 
+### Added
+- **3-finger Tap → `Super` / Search (`three_finger_tap = super`):** A quick 3-finger tap sends `Super_L` (opening Whisker Menu / Search on Xubuntu, or any custom `three_finger_tap_cmd`), automatically muting touchpad Middle Click (`Button 2`) while active and restoring it cleanly on exit or `three_finger_tap = off`.
+- **1-finger Double-Tap / Click-Drag Edge Auto-Slide (`edge_drag_slide = true`):** Reaching the outer border/corner of the touchpad while dragging continues gliding the cursor smoothly at 60fps via `XTestFakeRelativeMotionEvent` until you pull inward or lift your finger (`0%` idle CPU).
+
 ### Changed
 - **Windows-authentic 4-finger desktop switching:** Changed default 4-finger horizontal behavior (`four_finger_scrub = false`) to switch **one Virtual Desktop per swipe** (`D1 → D2` per swipe), matching Windows 10/11 Precision Touchpad ergonomics. Set `four_finger_scrub = true` in `~/.config/winpad-gestures.conf` to opt back into continuous multi-desktop scrubbing.
 - **Boundary-clamped 3-finger `Alt+Tab` & Task View scrubbing:** Both `Alt+Tab` scrubbing (via `_NET_CLIENT_LIST` window filtering) and Task View Left/Right card selection now **stop cleanly at the first and last window** instead of wrapping around. Also handles starting `Alt+Tab` when no normal window is focused (e.g. desktop / Show Desktop).

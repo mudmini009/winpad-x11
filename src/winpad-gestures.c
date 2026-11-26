@@ -62,9 +62,15 @@ typedef enum {
     FOUR_H_ALTTAB = 3
 } FourHorizMode;
 
+typedef enum {
+    THREE_TAP_OFF = 0,
+    THREE_TAP_SUPER = 1
+} ThreeTapMode;
+
 typedef struct {
     char device[512];
     char taskview_cmd[512];
+    char three_tap_cmd[512];
     TwoFingerMode two_f_mode;
     double two_f_min_mm;
     long two_f_max_ms;
@@ -73,12 +79,30 @@ typedef struct {
     double three_h_thresh_mm;
     double three_h_step_mm;
     double three_v_thresh_mm;
+    ThreeTapMode three_tap_mode;
+    long three_tap_max_ms;
+    double three_tap_max_mm;
     FourHorizMode four_h_mode;
     int four_h_scrub;
     double four_h_thresh_mm;
     double four_h_step_mm;
     double four_v_thresh_mm;
+    int edge_drag_slide;
+    double edge_drag_margin_mm;
+    double edge_drag_speed;
 } Config;
+
+typedef struct {
+    char path[512];
+    char name[256];
+    double res_x;
+    double res_y;
+    int max_fingers;
+    int32_t min_x;
+    int32_t max_x;
+    int32_t min_y;
+    int32_t max_y;
+} TouchpadInfo;
 
 typedef struct {
     int32_t tracking_id;
@@ -101,6 +125,7 @@ static int g_alt_tab_idx = 0;
 static int g_alt_tab_count = 0;
 static int g_xfwm_cycle_workspaces = 0;
 static int g_xfwm_cycle_minimized = 1;
+static char g_tp_name_muted[256] = {0};
 
 /* Animated Fluent Desktop OSD state */
 static Window g_osd_win = None;
@@ -120,6 +145,7 @@ static double g_osd_anim_pos = 0.0;
 static KeyCode g_kc_alt = 0;
 static KeyCode g_kc_shift = 0;
 static KeyCode g_kc_tab = 0;
+static KeyCode g_kc_super = 0;
 static KeyCode g_kc_left = 0;
 static KeyCode g_kc_right = 0;
 static KeyCode g_kc_back = 0;
@@ -181,8 +207,49 @@ static void release_alt_if_held(void) {
     g_alt_tab_count = 0;
 }
 
+static void sync_touchpad_middle_click(const char *dev_name, int mute) {
+    if (!dev_name || !dev_name[0]) return;
+    if (!mute && strcmp(g_tp_name_muted, dev_name) != 0) return;
+    if (mute && strcmp(g_tp_name_muted, dev_name) == 0) return;
+
+    static const char *script =
+        "command -v xinput >/dev/null 2>&1 || exit 0\n"
+        "dev=\"$1\"; b2=\"$2\"\n"
+        "if map=$(xinput get-button-map \"pointer:$dev\" 2>/dev/null); then\n"
+        "  dev=\"pointer:$dev\"\n"
+        "else\n"
+        "  map=$(xinput get-button-map \"$dev\" 2>/dev/null) || exit 0\n"
+        "fi\n"
+        "set -- $map\n"
+        "[ $# -ge 3 ] || exit 0\n"
+        "i=1; out=\"\"\n"
+        "for b in \"$@\"; do\n"
+        "  [ \"$i\" -eq 2 ] && out=\"$out $b2\" || out=\"$out $b\"\n"
+        "  i=$((i + 1))\n"
+        "done\n"
+        "exec xinput set-button-map \"$dev\" $out 2>/dev/null\n";
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        signal(SIGINT, SIG_DFL);
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGHUP, SIG_DFL);
+        signal(SIGCHLD, SIG_DFL);
+        setsid();
+        execl("/bin/sh", "sh", "-c", script, "sh", dev_name, mute ? "0" : "2", (char *)NULL);
+        _exit(127);
+    }
+
+    if (mute)
+        snprintf(g_tp_name_muted, sizeof(g_tp_name_muted), "%s", dev_name);
+    else
+        g_tp_name_muted[0] = '\0';
+}
+
 static void cleanup_all(void) {
     release_alt_if_held();
+    if (g_tp_name_muted[0])
+        sync_touchpad_middle_click(g_tp_name_muted, 0);
     if (g_osd_back) {
         cairo_surface_destroy(g_osd_back);
         g_osd_back = NULL;
@@ -258,11 +325,17 @@ static void load_config(void) {
     g_cfg.three_h_thresh_mm = 6.5;
     g_cfg.three_h_step_mm = 11.5;
     g_cfg.three_v_thresh_mm = 7.5;
+    g_cfg.three_tap_mode = THREE_TAP_SUPER;
+    g_cfg.three_tap_max_ms = 260;
+    g_cfg.three_tap_max_mm = 3.5;
     g_cfg.four_h_mode = FOUR_H_WORKSPACE_DIRECT;
     g_cfg.four_h_scrub = 0;
     g_cfg.four_h_thresh_mm = 7.5;
     g_cfg.four_h_step_mm = 15.0;
     g_cfg.four_v_thresh_mm = 8.0;
+    g_cfg.edge_drag_slide = 1;
+    g_cfg.edge_drag_margin_mm = 6.0;
+    g_cfg.edge_drag_speed = 460.0;
 
     load_xfwm4_cycle_prefs();
 
@@ -314,6 +387,19 @@ static void load_config(void) {
         } else if (strcmp(k, "three_finger_step_mm") == 0) {
             double val = atof(v);
             if (val >= 5.0 && val <= 80.0) g_cfg.three_h_step_mm = val;
+        } else if (strcmp(k, "three_finger_tap") == 0) {
+            if (strcmp(v, "off") == 0 || strcmp(v, "middle") == 0)
+                g_cfg.three_tap_mode = THREE_TAP_OFF;
+            else
+                g_cfg.three_tap_mode = THREE_TAP_SUPER;
+        } else if (strcmp(k, "three_finger_tap_cmd") == 0) {
+            expand_home(v, g_cfg.three_tap_cmd, sizeof(g_cfg.three_tap_cmd));
+        } else if (strcmp(k, "three_finger_tap_max_ms") == 0) {
+            long val = atol(v);
+            if (val >= 80 && val <= 800) g_cfg.three_tap_max_ms = val;
+        } else if (strcmp(k, "three_finger_tap_max_mm") == 0) {
+            double val = atof(v);
+            if (val >= 1.0 && val <= 15.0) g_cfg.three_tap_max_mm = val;
         } else if (strcmp(k, "four_finger_horiz") == 0) {
             if (strcmp(v, "off") == 0) g_cfg.four_h_mode = FOUR_H_OFF;
             else if (strcmp(v, "workspace_natural") == 0) g_cfg.four_h_mode = FOUR_H_WORKSPACE_NATURAL;
@@ -333,12 +419,20 @@ static void load_config(void) {
         } else if (strcmp(k, "four_finger_step_mm") == 0) {
             double val = atof(v);
             if (val >= 6.0 && val <= 80.0) g_cfg.four_h_step_mm = val;
+        } else if (strcmp(k, "edge_drag_slide") == 0) {
+            g_cfg.edge_drag_slide = parse_bool(v);
+        } else if (strcmp(k, "edge_drag_margin_mm") == 0) {
+            double val = atof(v);
+            if (val >= 2.0 && val <= 25.0) g_cfg.edge_drag_margin_mm = val;
+        } else if (strcmp(k, "edge_drag_speed") == 0) {
+            double val = atof(v);
+            if (val >= 80.0 && val <= 2000.0) g_cfg.edge_drag_speed = val;
         }
     }
     fclose(f);
 }
 
-static int is_touchpad_fd(int fd, int *out_max_fingers, double *res_x, double *res_y) {
+static int is_touchpad_fd(int fd, TouchpadInfo *tp) {
     unsigned long evbits[NBITS(EV_MAX)] = {0};
     unsigned long absbits[NBITS(ABS_MAX)] = {0};
     unsigned long keybits[NBITS(KEY_MAX)] = {0};
@@ -375,17 +469,19 @@ static int is_touchpad_fd(int fd, int *out_max_fingers, double *res_x, double *r
     if (rx < 1.0) rx = 30.0;
     if (ry < 1.0) ry = 30.0;
 
-    *out_max_fingers = maxf;
-    *res_x = rx;
-    *res_y = ry;
+    tp->max_fingers = maxf;
+    tp->res_x = rx;
+    tp->res_y = ry;
+    tp->min_x = ax.minimum;
+    tp->max_x = ax.maximum;
+    tp->min_y = ay.minimum;
+    tp->max_y = ay.maximum;
     return 1;
 }
 
-static int find_and_open_touchpad(char *out_path, size_t pathsz,
-                                  char *out_name, size_t namesz,
-                                  double *res_x, double *res_y, int *out_maxf,
-                                  int *saw_perm_denied) {
+static int find_and_open_touchpad(TouchpadInfo *tp, int *saw_perm_denied) {
     *saw_perm_denied = 0;
+    memset(tp, 0, sizeof(*tp));
 
     if (strcmp(g_cfg.device, "auto") != 0) {
         int fd = open(g_cfg.device, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
@@ -393,12 +489,12 @@ static int find_and_open_touchpad(char *out_path, size_t pathsz,
             if (errno == EACCES) *saw_perm_denied = 1;
             return -1;
         }
-        int mf = 1;
-        if (is_touchpad_fd(fd, &mf, res_x, res_y)) {
-            snprintf(out_path, pathsz, "%s", g_cfg.device);
-            if (ioctl(fd, EVIOCGNAME(namesz), out_name) < 0)
-                snprintf(out_name, namesz, "Unknown Touchpad");
-            *out_maxf = mf;
+        TouchpadInfo cand = {0};
+        if (is_touchpad_fd(fd, &cand)) {
+            snprintf(cand.path, sizeof(cand.path), "%s", g_cfg.device);
+            if (ioctl(fd, EVIOCGNAME(sizeof(cand.name)), cand.name) < 0)
+                snprintf(cand.name, sizeof(cand.name), "Unknown Touchpad");
+            *tp = cand;
             return fd;
         }
         close(fd);
@@ -409,9 +505,7 @@ static int find_and_open_touchpad(char *out_path, size_t pathsz,
     if (!dir) return -1;
 
     int best_fd = -1;
-    int best_maxf = 0;
-    double best_rx = 30.0, best_ry = 30.0;
-    char best_path[512] = {0}, best_name[256] = {0};
+    TouchpadInfo best = {0};
 
     struct dirent *de;
     while ((de = readdir(dir)) != NULL) {
@@ -423,20 +517,15 @@ static int find_and_open_touchpad(char *out_path, size_t pathsz,
             if (errno == EACCES) *saw_perm_denied = 1;
             continue;
         }
-        int mf = 0;
-        double rx = 30.0, ry = 30.0;
-        if (is_touchpad_fd(fd, &mf, &rx, &ry)) {
-            char nm[256] = {0};
-            if (ioctl(fd, EVIOCGNAME(sizeof(nm)), nm) < 0)
-                snprintf(nm, sizeof(nm), "Touchpad");
-            if (mf > best_maxf) {
+        TouchpadInfo cand = {0};
+        if (is_touchpad_fd(fd, &cand)) {
+            if (ioctl(fd, EVIOCGNAME(sizeof(cand.name)), cand.name) < 0)
+                snprintf(cand.name, sizeof(cand.name), "Touchpad");
+            if (cand.max_fingers > best.max_fingers) {
                 if (best_fd >= 0) close(best_fd);
                 best_fd = fd;
-                best_maxf = mf;
-                best_rx = rx;
-                best_ry = ry;
-                snprintf(best_path, sizeof(best_path), "%s", p);
-                snprintf(best_name, sizeof(best_name), "%s", nm);
+                snprintf(cand.path, sizeof(cand.path), "%s", p);
+                best = cand;
             } else {
                 close(fd);
             }
@@ -446,13 +535,8 @@ static int find_and_open_touchpad(char *out_path, size_t pathsz,
     }
     closedir(dir);
 
-    if (best_fd >= 0) {
-        snprintf(out_path, pathsz, "%s", best_path);
-        snprintf(out_name, namesz, "%s", best_name);
-        *res_x = best_rx;
-        *res_y = best_ry;
-        *out_maxf = best_maxf;
-    }
+    if (best_fd >= 0)
+        *tp = best;
     return best_fd;
 }
 
@@ -509,6 +593,7 @@ static void init_x11_state(void) {
     g_kc_alt   = XKeysymToKeycode(g_dpy, XK_Alt_L);
     g_kc_shift = XKeysymToKeycode(g_dpy, XK_Shift_L);
     g_kc_tab   = XKeysymToKeycode(g_dpy, XK_Tab);
+    g_kc_super = XKeysymToKeycode(g_dpy, XK_Super_L);
     g_kc_left  = XKeysymToKeycode(g_dpy, XK_Left);
     g_kc_right = XKeysymToKeycode(g_dpy, XK_Right);
 #ifdef XF86XK_Back
@@ -1116,6 +1201,49 @@ static void reap_children(void) {
     while (waitpid(-1, NULL, WNOHANG) > 0) {}
 }
 
+static int is_pointer_btn1_pressed(void) {
+    if (!g_dpy || g_root == None) return 0;
+    Window rw = None, cw = None;
+    int rx = 0, ry = 0, wx = 0, wy = 0;
+    unsigned int mask = 0;
+    if (XQueryPointer(g_dpy, g_root, &rw, &cw, &rx, &ry, &wx, &wy, &mask))
+        return (mask & Button1Mask) != 0;
+    return 0;
+}
+
+static void tick_edge_drag(long tnow, int btn_left_down, int *edge_sliding,
+                           double edge_vx, double edge_vy,
+                           double *edge_rem_x, double *edge_rem_y,
+                           long *edge_last_tick_ms) {
+    if (!*edge_sliding || !g_dpy) return;
+    if (tnow - *edge_last_tick_ms < 15L) return;
+
+    if (!btn_left_down && !is_pointer_btn1_pressed()) {
+        *edge_sliding = 0;
+        *edge_rem_x = 0.0;
+        *edge_rem_y = 0.0;
+        return;
+    }
+
+    long dt = tnow - *edge_last_tick_ms;
+    if (dt <= 0) dt = 16L;
+    if (dt > 60L) dt = 60L;
+    *edge_last_tick_ms = tnow;
+
+    double dt_s = (double)dt / 1000.0;
+    *edge_rem_x += edge_vx * dt_s;
+    *edge_rem_y += edge_vy * dt_s;
+    int mx = (int)trunc(*edge_rem_x);
+    int my = (int)trunc(*edge_rem_y);
+    *edge_rem_x -= (double)mx;
+    *edge_rem_y -= (double)my;
+
+    if (mx != 0 || my != 0) {
+        XTestFakeRelativeMotionEvent(g_dpy, mx, my, CurrentTime);
+        XFlush(g_dpy);
+    }
+}
+
 static void evaluate_three_finger_gesture(double res_x, double res_y, double accum_x, double accum_y,
                                           double *step_anchor_x, int *gesture_fired,
                                           int *three_tv_scrub, long tnow) {
@@ -1215,13 +1343,12 @@ int main(int argc, char **argv) {
     }
 
     if (check_only) {
-        char path[512] = {0}, name[256] = {0};
-        double rx = 0, ry = 0;
-        int mf = 0, perm = 0;
-        int fd = find_and_open_touchpad(path, sizeof(path), name, sizeof(name), &rx, &ry, &mf, &perm);
+        TouchpadInfo tp;
+        int perm = 0;
+        int fd = find_and_open_touchpad(&tp, &perm);
         if (fd >= 0) {
             printf("TOUCHPAD_OK path=%s name=\"%s\" max_fingers=%d res_x=%.1f res_y=%.1f\n",
-                   path, name, mf, rx, ry);
+                   tp.path, tp.name, tp.max_fingers, tp.res_x, tp.res_y);
             close(fd);
             return 0;
         }
@@ -1261,11 +1388,9 @@ int main(int argc, char **argv) {
             load_config();
         }
 
-        char dev_path[512] = {0}, dev_name[256] = {0};
-        double res_x = 30.0, res_y = 30.0;
-        int max_f = 0, perm_denied = 0;
-        int fd = find_and_open_touchpad(dev_path, sizeof(dev_path), dev_name, sizeof(dev_name),
-                                        &res_x, &res_y, &max_f, &perm_denied);
+        TouchpadInfo tp;
+        int perm_denied = 0;
+        int fd = find_and_open_touchpad(&tp, &perm_denied);
         if (fd < 0) {
             if (perm_denied)
                 fprintf(stderr, "Waiting for touchpad permission on /dev/input/event*...\n");
@@ -1273,8 +1398,12 @@ int main(int argc, char **argv) {
             continue;
         }
 
+        double res_x = tp.res_x;
+        double res_y = tp.res_y;
         fprintf(stderr, "Listening on %s (%s), %d-finger capable (res=%.1f,%.1f)\n",
-                dev_path, dev_name, max_f, res_x, res_y);
+                tp.path, tp.name, tp.max_fingers, res_x, res_y);
+
+        sync_touchpad_middle_click(tp.name, g_cfg.three_tap_mode != THREE_TAP_OFF);
 
         Slot slots[MAX_SLOTS];
         for (int s = 0; s < MAX_SLOTS; s++) {
@@ -1285,24 +1414,36 @@ int main(int argc, char **argv) {
 
         int cur_slot = 0;
         unsigned int tool_mask = 0;
+        int btn_left_down = 0;
         int mode_fingers = 0;
         int peak_fingers = 0;
         long touch_start_ms = 0;
         long drop_pending_since = 0;
         double accum_x = 0.0, accum_y = 0.0;
+        double touch_travel_mm = 0.0;
         double step_anchor_x = 0.0;
         long gesture_start_ms = 0;
         int gesture_fired = 0;
+        int any_multi_gesture = 0;
         int three_tv_scrub = 0;
         int four_ws_scrub = 0;
         int four_f_locked = 0;
         int two_f_scroll_locked = 0;
         int two_f_triggered = 0;
 
+        /* Double-tap / click-drag edge auto-slide state */
+        double one_f_travel_mm = 0.0;
+        int one_f_inner_seen = 0;
+        int edge_sliding = 0;
+        double edge_vx = 0.0, edge_vy = 0.0;
+        double edge_rem_x = 0.0, edge_rem_y = 0.0;
+        long edge_last_tick_ms = 0;
+
         while (g_running) {
             if (g_reload_cfg) {
                 g_reload_cfg = 0;
                 load_config();
+                sync_touchpad_middle_click(tp.name, g_cfg.three_tap_mode != THREE_TAP_OFF);
             }
 
             long tnow_loop = now_ms();
@@ -1312,9 +1453,14 @@ int main(int argc, char **argv) {
                 else if (tnow_loop - g_osd_last_render_ms >= OSD_FRAME_MS)
                     render_osd_frame(tnow_loop);
             }
+            if (edge_sliding) {
+                tick_edge_drag(tnow_loop, btn_left_down, &edge_sliding,
+                               edge_vx, edge_vy, &edge_rem_x, &edge_rem_y,
+                               &edge_last_tick_ms);
+            }
 
             int timeout_ms = 1000;
-            if (g_osd_visible) timeout_ms = 16; /* 60fps smooth OSD animation while visible */
+            if (g_osd_visible || edge_sliding) timeout_ms = 16; /* 60fps smooth OSD / edge drag glide */
             else if (g_alt_held && drop_pending_since > 0) timeout_ms = 20;
             else if (mode_fingers == 3 && !gesture_fired && !g_alt_held && !three_tv_scrub) timeout_ms = 12;
 
@@ -1330,12 +1476,19 @@ int main(int argc, char **argv) {
                     if (tnow >= g_osd_hide_at) hide_osd();
                     else if (tnow - g_osd_last_render_ms >= OSD_FRAME_MS) render_osd_frame(tnow);
                 }
+                if (edge_sliding) {
+                    tick_edge_drag(tnow, btn_left_down, &edge_sliding,
+                                   edge_vx, edge_vy, &edge_rem_x, &edge_rem_y,
+                                   &edge_last_tick_ms);
+                }
                 if (mode_fingers == 3 && !gesture_fired && !g_alt_held && !three_tv_scrub &&
                     !four_f_locked && drop_pending_since == 0 &&
                     (tnow - gesture_start_ms) >= THREE_F_SETTLE_MS) {
                     evaluate_three_finger_gesture(res_x, res_y, accum_x, accum_y,
                                                   &step_anchor_x, &gesture_fired,
                                                   &three_tv_scrub, tnow);
+                    if (gesture_fired || g_alt_held || three_tv_scrub)
+                        any_multi_gesture = 1;
                 }
                 if (drop_pending_since > 0 && (tnow - drop_pending_since) >= DROP_HYSTERESIS_MS) {
                     release_alt_if_held();
@@ -1374,7 +1527,9 @@ int main(int argc, char **argv) {
                         slots[cur_slot].y = ev->value;
                     }
                 } else if (ev->type == EV_KEY) {
-                    if (ev->code == BTN_TOOL_FINGER) {
+                    if (ev->code == BTN_LEFT) {
+                        btn_left_down = (ev->value != 0);
+                    } else if (ev->code == BTN_TOOL_FINGER) {
                         if (ev->value) tool_mask |= (1U << 1); else tool_mask &= ~(1U << 1);
                     } else if (ev->code == BTN_TOOL_DOUBLETAP) {
                         if (ev->value) tool_mask |= (1U << 2); else tool_mask &= ~(1U << 2);
@@ -1392,26 +1547,37 @@ int main(int argc, char **argv) {
                         slots[s].was_active = 0;
                     }
                     tool_mask = 0;
+                    btn_left_down = 0;
                     mode_fingers = 0;
                     peak_fingers = 0;
                     touch_start_ms = 0;
                     drop_pending_since = 0;
                     accum_x = accum_y = 0.0;
+                    touch_travel_mm = 0.0;
                     step_anchor_x = 0.0;
                     gesture_fired = 0;
+                    any_multi_gesture = 0;
                     three_tv_scrub = 0;
                     four_ws_scrub = 0;
                     four_f_locked = 0;
                     two_f_scroll_locked = 0;
                     two_f_triggered = 0;
                     gesture_start_ms = 0;
+                    one_f_travel_mm = 0.0;
+                    one_f_inner_seen = 0;
+                    edge_sliding = 0;
+                    edge_vx = edge_vy = 0.0;
+                    edge_rem_x = edge_rem_y = 0.0;
+                    edge_last_tick_ms = 0;
                 } else if (ev->type == EV_SYN && ev->code == SYN_REPORT) {
                     int n_active = 0;
+                    int one_slot = -1;
                     double sum_dx = 0.0, sum_dy = 0.0;
                     int shared = 0;
 
                     for (int s = 0; s < MAX_SLOTS; s++) {
                         if (slots[s].tracking_id >= 0) {
+                            one_slot = s;
                             n_active++;
                             if (slots[s].was_active) {
                                 sum_dx += (double)(slots[s].x - slots[s].prev_x);
@@ -1436,20 +1602,44 @@ int main(int argc, char **argv) {
                     long tnow = now_ms();
 
                     if (fingers == 0) {
+                        double net_disp_mm = hypot(accum_x / res_x, accum_y / res_y);
+                        if (g_cfg.three_tap_mode != THREE_TAP_OFF &&
+                            peak_fingers == 3 && !any_multi_gesture &&
+                            !g_alt_held && !three_tv_scrub && !four_f_locked &&
+                            touch_start_ms > 0 && (tnow - touch_start_ms) <= g_cfg.three_tap_max_ms &&
+                            touch_travel_mm <= g_cfg.three_tap_max_mm &&
+                            net_disp_mm <= g_cfg.three_tap_max_mm) {
+                            if (g_debug)
+                                fprintf(stderr, "DEBUG: 3-finger Tap (dt=%ldms travel=%.1fmm) -> Super\n",
+                                        tnow - touch_start_ms, touch_travel_mm);
+                            if (g_cfg.three_tap_cmd[0])
+                                spawn_cmd(g_cfg.three_tap_cmd);
+                            else if (g_kc_super)
+                                send_key_combo(0, g_kc_super);
+                        }
+
                         release_alt_if_held();
                         mode_fingers = 0;
                         peak_fingers = 0;
                         touch_start_ms = 0;
                         drop_pending_since = 0;
                         accum_x = accum_y = 0.0;
+                        touch_travel_mm = 0.0;
                         step_anchor_x = 0.0;
                         gesture_fired = 0;
+                        any_multi_gesture = 0;
                         three_tv_scrub = 0;
                         four_ws_scrub = 0;
                         four_f_locked = 0;
                         two_f_scroll_locked = 0;
                         two_f_triggered = 0;
                         gesture_start_ms = 0;
+                        one_f_travel_mm = 0.0;
+                        one_f_inner_seen = 0;
+                        edge_sliding = 0;
+                        edge_vx = edge_vy = 0.0;
+                        edge_rem_x = edge_rem_y = 0.0;
+                        edge_last_tick_ms = 0;
                         continue;
                     }
 
@@ -1458,6 +1648,12 @@ int main(int argc, char **argv) {
 
                     if (fingers > peak_fingers)
                         peak_fingers = fingers;
+
+                    if (fingers > 1 && edge_sliding) {
+                        edge_sliding = 0;
+                        edge_vx = edge_vy = 0.0;
+                        edge_rem_x = edge_rem_y = 0.0;
+                    }
 
                     /* Preserve fast initial flick momentum during rapid finger landing (<55ms) */
                     if (fingers > mode_fingers) {
@@ -1504,6 +1700,10 @@ int main(int argc, char **argv) {
                         double fdy = sum_dy / (double)shared;
                         accum_x += fdx;
                         accum_y += fdy;
+                        double step_dist_mm = hypot(fdx / res_x, fdy / res_y);
+                        touch_travel_mm += step_dist_mm;
+                        if (mode_fingers == 1 && peak_fingers == 1)
+                            one_f_travel_mm += step_dist_mm;
                     }
 
                     double dx_mm = accum_x / res_x;
@@ -1511,8 +1711,63 @@ int main(int argc, char **argv) {
                     double adx = fabs(dx_mm);
                     double ady = fabs(dy_mm);
 
+                    /* 1-finger double-tap/click-drag edge auto-slide */
+                    if (mode_fingers == 1 && peak_fingers == 1 && g_cfg.edge_drag_slide && one_slot >= 0) {
+                        double span_x = (double)(tp.max_x - tp.min_x);
+                        double span_y = (double)(tp.max_y - tp.min_y);
+                        double mx_cnt = g_cfg.edge_drag_margin_mm * res_x;
+                        double my_cnt = g_cfg.edge_drag_margin_mm * res_y;
+                        if (mx_cnt > span_x * 0.22) mx_cnt = span_x * 0.22;
+                        if (my_cnt > span_y * 0.22) my_cnt = span_y * 0.22;
+
+                        if (mx_cnt >= 1.0 && my_cnt >= 1.0) {
+                            double fx = (double)slots[one_slot].x;
+                            double fy = (double)slots[one_slot].y;
+                            double ex = 0.0, ey = 0.0;
+
+                            if (fx <= (double)tp.min_x + mx_cnt)
+                                ex = -(((double)tp.min_x + mx_cnt - fx) / mx_cnt);
+                            else if (fx >= (double)tp.max_x - mx_cnt)
+                                ex = (fx - ((double)tp.max_x - mx_cnt)) / mx_cnt;
+
+                            if (fy <= (double)tp.min_y + my_cnt)
+                                ey = -(((double)tp.min_y + my_cnt - fy) / my_cnt);
+                            else if (fy >= (double)tp.max_y - my_cnt)
+                                ey = (fy - ((double)tp.max_y - my_cnt)) / my_cnt;
+
+                            if (ex < -1.0) ex = -1.0; else if (ex > 1.0) ex = 1.0;
+                            if (ey < -1.0) ey = -1.0; else if (ey > 1.0) ey = 1.0;
+
+                            if (ex == 0.0 && ey == 0.0) {
+                                one_f_inner_seen = 1;
+                                edge_sliding = 0;
+                                edge_vx = edge_vy = 0.0;
+                                edge_rem_x = edge_rem_y = 0.0;
+                            } else if ((btn_left_down || one_f_inner_seen || one_f_travel_mm >= 2.0) &&
+                                       (btn_left_down || is_pointer_btn1_pressed())) {
+                                edge_vx = (ex != 0.0)
+                                              ? (ex > 0.0 ? 1.0 : -1.0) * g_cfg.edge_drag_speed * (0.40 + 0.60 * fabs(ex))
+                                              : 0.0;
+                                edge_vy = (ey != 0.0)
+                                              ? (ey > 0.0 ? 1.0 : -1.0) * g_cfg.edge_drag_speed * (0.40 + 0.60 * fabs(ey))
+                                              : 0.0;
+                                if (!edge_sliding) {
+                                    edge_sliding = 1;
+                                    edge_last_tick_ms = tnow;
+                                    edge_rem_x = edge_rem_y = 0.0;
+                                    if (g_debug)
+                                        fprintf(stderr, "DEBUG: Edge drag slide active vx=%.0f vy=%.0f\n",
+                                                edge_vx, edge_vy);
+                                }
+                            } else {
+                                edge_sliding = 0;
+                                edge_vx = edge_vy = 0.0;
+                            }
+                        }
+                    }
+
                     /* 2-finger horizontal flick -> Back / Forward */
-                    if (mode_fingers == 2 && peak_fingers == 2 && g_cfg.two_f_mode != TWO_F_OFF &&
+                    else if (mode_fingers == 2 && peak_fingers == 2 && g_cfg.two_f_mode != TWO_F_OFF &&
                         !two_f_scroll_locked && !two_f_triggered) {
                         if (ady >= 5.5) {
                             two_f_scroll_locked = 1;
@@ -1520,6 +1775,7 @@ int main(int argc, char **argv) {
                             long dt = tnow - gesture_start_ms;
                             if (adx > 2.5 * ady && dt <= g_cfg.two_f_max_ms) {
                                 two_f_triggered = 1;
+                                any_multi_gesture = 1;
                                 int is_right = (dx_mm > 0.0);
                                 int is_back = (g_cfg.two_f_mode == TWO_F_NATURAL) ? is_right : !is_right;
                                 trigger_back_forward(is_back);
@@ -1554,6 +1810,8 @@ int main(int argc, char **argv) {
                             evaluate_three_finger_gesture(res_x, res_y, accum_x, accum_y,
                                                           &step_anchor_x, &gesture_fired,
                                                           &three_tv_scrub, tnow);
+                            if (gesture_fired || g_alt_held || three_tv_scrub)
+                                any_multi_gesture = 1;
                         }
                     }
 
@@ -1575,6 +1833,7 @@ int main(int argc, char **argv) {
                                 adx >= g_cfg.four_h_thresh_mm && adx > 1.30 * ady) {
                                 int dir_right = (dx_mm > 0.0);
                                 four_f_locked = 1;
+                                any_multi_gesture = 1;
                                 if (g_cfg.four_h_mode == FOUR_H_ALTTAB) {
                                     gesture_fired = 1;
                                     send_alt_tab_once(dir_right);
@@ -1597,10 +1856,12 @@ int main(int argc, char **argv) {
                             } else if (-dy_mm >= g_cfg.four_v_thresh_mm && ady > 1.30 * adx) {
                                 gesture_fired = 1;
                                 four_f_locked = 1;
+                                any_multi_gesture = 1;
                                 handle_vertical_gesture(1);
                             } else if (dy_mm >= g_cfg.four_v_thresh_mm && ady > 1.30 * adx) {
                                 gesture_fired = 1;
                                 four_f_locked = 1;
+                                any_multi_gesture = 1;
                                 handle_vertical_gesture(0);
                             }
                         }
@@ -1610,6 +1871,7 @@ int main(int argc, char **argv) {
         }
 
         release_alt_if_held();
+        sync_touchpad_middle_click(tp.name, 0);
         close(fd);
         if (g_running) sleep(1);
     }

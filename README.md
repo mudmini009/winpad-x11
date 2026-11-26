@@ -30,6 +30,8 @@ Most Linux X11 gesture tools either run heavy scripting runtimes (Ruby/Python), 
 | **Stack** | **Pure C (`evdev` + `X11`/`XTest`)** | C++ daemon + client | Python + pipe | Ruby gem | C / C++ daemon |
 | **Runtime deps** | **None** | PPA / pugixml / GTK | `libinput-tools`, `xdotool` | Ruby, `libinput-tools`, `xdotool` | `libinput-dev`, `xdotool` |
 | **Windows 3-state Up/Down cycle** | **Yes** | No | No | No | No |
+| **3-finger Tap → Search (`Super`)** | **Yes** (auto-suppresses Middle Click) | Partial | No | No | No |
+| **Double-tap Drag Edge Auto-Slide** | **Yes** (60fps edge glide on drag) | No | No | No | No |
 | **Interactive `Alt+Tab` scrubbing** | **Yes** (holds `Alt`, clamped at ends) | Partial | No | No | No |
 | **1-swipe = 1-desktop (`4F`)** | **Yes** (Windows 11 default + Fluent OSD) | Manual | Manual | Manual | Manual |
 | **Multi-language XKB layout safe** | **Yes** (`grp:alt_shift_toggle` safe) | No | No | No | No |
@@ -58,6 +60,8 @@ Unlike simple toggle scripts, 3-finger & 4-finger vertical swipes follow the exa
 - **Task View open → Swipe Down:** Closes Task View back to your windows
 
 ### Smart Responsiveness & Anti-Misfire Guards
+- **Double-tap & Click-drag Edge Auto-Slide:** When dragging a window, file, or text selection and your finger reaches the outer `6 mm` border/corner of the touchpad, `winpad-gestures` smoothly glides the pointer at 60fps (`Button1` held, zero sticky drop delay) until you pull inward or lift your finger (`edge_drag_slide = true`).
+- **Windows-style 3-finger Tap → `Super` (Search / Whisker Menu):** A quick 3-finger tap (`<= 260 ms`, `<= 3.5 mm` travel) presses `Super_L` to open Search / Whisker Menu on Xubuntu, automatically muting touchpad Middle Click (`Button 2`) while active so it never accidentally pastes or closes tabs (configurable back to Linux Middle Click via `three_finger_tap = off`).
 - **Fast-landing merge & 45 ms bounce hysteresis:** Preserves rapid initial swipe momentum during multi-finger landing (`< 55 ms`), with a `22 ms` 3-vs-4 settle window, `45 ms` downward-bounce hysteresis, and `4 -> 3` liftoff lock so swipes feel instantaneous while staying misfire-proof.
 - **Boundary-clamped 3-finger `Alt+Tab` scrubbing:** Slide across the touchpad to scrub smoothly across open windows while holding `Alt`—**stopping cleanly at the first and last window** (Windows 10/11 style, no wraparound loop), even if starting from the desktop or Show Desktop.
 - **Windows-authentic 4-finger Desktop switch (`1 swipe = 1 desktop`):** Each 4-finger swipe Left/Right switches **one** Virtual Desktop cleanly with a 60fps time-compensated **Primary-Monitor Fluent ARGB OSD** via XRandR + Cairo (or set `four_finger_scrub = true` in config for continuous multi-desktop scrubbing).
@@ -73,11 +77,12 @@ Unlike simple toggle scripts, 3-finger & 4-finger vertical swipes follow the exa
 | Fingers | Gesture | Windows 11 Precision Default | `winpad-x11` Behavior | Match |
 |:---:|---|---|---|:---:|
 | **1F** | Move, tap, tap-drag, click | Cursor, left-click, drag | Handled natively via `libinput` (`40-libinput.conf`) | ✅ Exact |
+| **1F** | Double-tap & drag at edge/corner | Continues sliding until lifted | 60fps Edge Drag Auto-Slide (`edge_drag_slide = true`) | ✅ Exact |
 | **2F** | Tap | Right-click | `ClickMethod=clickfinger` + `TappingButtonMap=lrm` | ✅ Exact |
 | **2F** | Scroll Up/Down/Left/Right | Natural scroll | `NaturalScrolling=true` + `HorizontalScrolling=true` | ✅ Exact |
 | **2F** | Quick horizontal flick | Browser Back / Forward | `XF86Back`/`Forward` + IDE `Alt+←/→` (terminal-safe) | ✅ Exact |
 | **2F** | Pinch In / Out | App zoom | Handled by apps supporting `libinput` XI2.4 gestures | ℹ️ App-dependent |
-| **3F** | Tap | Windows Search | Linux Middle Click (`libinput` standard) | ℹ️ Linux convention |
+| **3F** | Tap | Windows Search | Sends `Super_L` (Whisker Menu / Search; `off` restores Middle Click) | ✅ Exact |
 | **3F** | Swipe Up / Down | Task View ↔ Windows ↔ Desktop | Exact 3-state cycle (`winpad-taskview` + `_NET_SHOWING_DESKTOP`) | ✅ Exact |
 | **3F** | Swipe Left / Right | Interactive `Alt+Tab` (clamped ends) | Holds `Alt`, scrubs `Tab`/`Shift+Tab`, **stops at ends** | ✅ Exact |
 | **4F** | Swipe Left / Right | 1 desktop per swipe (Right = next) | 1 desktop per swipe (`workspace_direct`) + Fluent OSD | ✅ Exact |
@@ -171,6 +176,11 @@ killall -HUP winpad-gestures
 # Device ("auto" scans /dev/input/event* for any multitouch touchpad)
 device = auto
 
+# 1-finger Double-Tap / Click-Drag Edge Auto-Slide (keeps sliding when hitting touchpad edges)
+edge_drag_slide = true
+edge_drag_margin_mm = 6.0
+edge_drag_speed = 460
+
 # 2-finger horizontal flick: natural (right=Back, left=Forward) | arrow | off
 two_finger_swipe = natural
 two_finger_swipe_min_mm = 14
@@ -182,6 +192,10 @@ three_finger_direction = direct
 three_finger_thresh_mm = 6.5
 three_finger_step_mm = 11.5
 three_finger_v_thresh_mm = 7.5
+
+# 3-finger tap: super (Windows 11 Search / Whisker Menu) | off (Linux Middle Click)
+three_finger_tap = super
+# three_finger_tap_cmd = xfce4-popup-whiskermenu
 
 # 4-finger horizontal swipe: workspace_direct (Windows 11 default: 1 swipe = 1 desktop) | workspace_natural | alt_tab | off
 four_finger_horiz = workspace_direct
@@ -199,7 +213,7 @@ taskview_cmd = ~/.local/bin/winpad-taskview
 <summary><strong>Architecture & How It Works</strong></summary>
 
 - **Direct kernel `evdev` reader (`src/winpad-gestures.c`):** Reads `ABS_MT_SLOT` / `ABS_MT_TRACKING_ID` / `ABS_MT_POSITION_X/Y` directly from `/dev/input/event*` using `poll()` (0% idle CPU) and scales deltas using the hardware's physical `resolution` (counts/mm). Because it reads `evdev` directly, 3/4-finger gestures work even on older `xserver-xorg-input-libinput` versions.
-- **Zero-spawn X11/EWMH actions:** Emits `Alt+Tab`, `XF86Back`/`Forward`, and navigation keys directly via `XTest`, queries `_NET_CLIENT_LIST` / `_NET_WM_WINDOW_TYPE` / `_NET_WM_STATE` for boundary-clamped `Alt+Tab`, switches workspaces via `_NET_CURRENT_DESKTOP`, and draws the 32-bit ARGB Fluent OSD using Cairo + XRandR.
+- **Zero-spawn X11/EWMH actions:** Emits `Alt+Tab`, `Super_L`, `XF86Back`/`Forward`, and navigation keys directly via `XTest`, queries `_NET_CLIENT_LIST` / `_NET_WM_WINDOW_TYPE` / `_NET_WM_STATE` for boundary-clamped `Alt+Tab`, switches workspaces via `_NET_CURRENT_DESKTOP`, drives 60fps edge-drag auto-sliding via `XTestFakeRelativeMotionEvent` only while dragging inside the border zone, and draws the 32-bit ARGB Fluent OSD using Cairo + XRandR.
 - **On-demand `winpad-taskview` (`src/winpad-taskview.c`):** Spawned only when Task View opens (`SIGUSR1` updates workspace on live desktop switch, `SIGTERM` / re-invocation toggles off), captures `XComposite` backing pixmaps before mapping, caches the backdrop surface, and exits cleanly when a window is chosen (`0 MB` idle RAM).
 
 </details>
@@ -207,6 +221,8 @@ taskview_cmd = ~/.local/bin/winpad-taskview
 <details>
 <summary><strong>Troubleshooting & Diagnostics</strong></summary>
 
+- **3-finger tap opens nothing on older XFCE configs:** Ensure `Super_L` is bound to `xfce4-popup-whiskermenu` in *Settings → Keyboard → Application Shortcuts*, or set `three_finger_tap_cmd = xfce4-popup-whiskermenu` in `~/.config/winpad-gestures.conf`.
+- **Want sticky tap-drag lock across finger lifts too?** `xinput set-prop "<Your Touchpad Name>" "libinput Tapping Drag Lock Enabled" 1` (optional; `edge_drag_slide` handles edge/corner sliding without sticky drop lag).
 - **Verify touchpad detection & permissions:**
   ```bash
   ~/.local/bin/winpad-gestures --check
