@@ -289,7 +289,7 @@ taskview_cmd = ~/.local/bin/winpad-taskview
 
 <div align="center">
 
-**[Changelog](CHANGELOG.md)** &nbsp;•&nbsp; **[Report a Bug](.github/ISSUE_TEMPLATE/bug_report.md)** &nbsp;•&nbsp; **[Request a Feature](.github/ISSUE_TEMPLATE/feature_request.md)** &nbsp;•&nbsp; **[MIT License](LICENSE)**
+**[Changelog](CHANGELOG.md)** &nbsp;•&nbsp; **[Report a Bug](.github/ISSUE_TEMPLATE/bug_report.md)** &nbsp;•&nbsp; **[Request a Feature](.github/ISSUE_TEMPLATE/feature_request.md)** &nbsp;•&nbsp; **[MIT License](LICENSE)** 
 
 <sub>If <code>winpad-x11</code> made your Linux touchpad feel like home, consider giving it a ⭐ on GitHub!</sub>
 
