@@ -823,6 +823,7 @@ static void render_osd_frame(long tnow) {
     cairo_set_source_surface(xcr, g_osd_back, 0.0, 0.0);
     cairo_paint(xcr);
     cairo_destroy(xcr);
+    cairo_surface_flush(g_osd_xsurf);
     XFlush(g_dpy);
 }
 
